@@ -1,0 +1,120 @@
+services:
+  pagi-event-router:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        SERVICE: pagi-event-router
+    environment:
+      - RUST_LOG=info
+      - BIND_ADDR=0.0.0.0:7001
+    ports:
+      - "7001:7001"
+
+  pagi-working-memory:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        SERVICE: pagi-working-memory
+    environment:
+      - RUST_LOG=info
+      - BIND_ADDR=0.0.0.0:7003
+      - EVENT_ROUTER_URL=http://pagi-event-router:7001
+    ports:
+      - "7003:7003"
+    depends_on:
+      - pagi-event-router
+
+  pagi-context-builder:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        SERVICE: pagi-context-builder
+    environment:
+      - RUST_LOG=info
+      - BIND_ADDR=0.0.0.0:7004
+      - WORKING_MEMORY_URL=http://pagi-working-memory:7003
+      - EVENT_ROUTER_URL=http://pagi-event-router:7001
+    ports:
+      - "7004:7004"
+    depends_on:
+      - pagi-event-router
+      - pagi-working-memory
+
+  pagi-inference-gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        SERVICE: pagi-inference-gateway
+    environment:
+      - RUST_LOG=info
+      - BIND_ADDR=0.0.0.0:7005
+      - EVENT_ROUTER_URL=http://pagi-event-router:7001
+    ports:
+      - "7005:7005"
+    depends_on:
+      - pagi-event-router
+
+  pagi-identity-service:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        SERVICE: pagi-identity-service
+    environment:
+      - RUST_LOG=info
+      - BIND_ADDR=0.0.0.0:7002
+      - EVENT_ROUTER_URL=http://pagi-event-router:7001
+    ports:
+      - "7002:7002"
+    depends_on:
+      - pagi-event-router
+
+  pagi-executive-engine:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        SERVICE: pagi-executive-engine
+    environment:
+      - RUST_LOG=info
+      - BIND_ADDR=0.0.0.0:7006
+      - EVENT_ROUTER_URL=http://pagi-event-router:7001
+    ports:
+      - "7006:7006"
+    depends_on:
+      - pagi-event-router
+
+  pagi-emotion-state-manager:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        SERVICE: pagi-emotion-state-manager
+    environment:
+      - RUST_LOG=info
+      - BIND_ADDR=0.0.0.0:7007
+      - EVENT_ROUTER_URL=http://pagi-event-router:7001
+    ports:
+      - "7007:7007"
+    depends_on:
+      - pagi-event-router
+
+  pagi-sensor-actuator:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        SERVICE: pagi-sensor-actuator
+    environment:
+      - RUST_LOG=info
+      - BIND_ADDR=0.0.0.0:7008
+      - EVENT_ROUTER_URL=http://pagi-event-router:7001
+    ports:
+      - "7008:7008"
+    depends_on:
+      - pagi-event-router
+

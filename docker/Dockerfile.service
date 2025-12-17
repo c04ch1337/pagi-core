@@ -1,0 +1,25 @@
+FROM rust:1.85 as builder
+WORKDIR /app
+
+ARG SERVICE
+
+COPY Cargo.toml Cargo.toml
+COPY common common
+COPY services services
+COPY plugins plugins
+
+RUN cargo build --release -p ${SERVICE}
+
+FROM debian:bookworm-slim
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+
+ARG SERVICE
+COPY --from=builder /app/target/release/${SERVICE} /usr/local/bin/${SERVICE}
+
+ENV SERVICE=${SERVICE}
+
+ENV BIND_ADDR=0.0.0.0:7000
+EXPOSE 7000
+
+CMD ["/bin/sh", "-c", "/usr/local/bin/$SERVICE"]
