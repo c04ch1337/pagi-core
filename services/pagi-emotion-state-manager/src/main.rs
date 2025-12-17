@@ -4,7 +4,7 @@ use axum::{
     routing::get,
     Json, Router,
 };
-use pagi_common::{EventEnvelope, EventType};
+use pagi_common::{publish_event, EventEnvelope, EventType};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{collections::HashMap, net::SocketAddr, sync::Arc};
@@ -31,8 +31,6 @@ impl Default for EmotionState {
 #[derive(Clone)]
 struct AppState {
     store: Arc<RwLock<HashMap<Uuid, EmotionState>>>,
-    event_router_url: Option<String>,
-    http: reqwest::Client,
 }
 
 #[tokio::main]
@@ -41,8 +39,6 @@ async fn main() {
 
     let state = AppState {
         store: Arc::new(RwLock::new(HashMap::new())),
-        event_router_url: std::env::var("EVENT_ROUTER_URL").ok(),
-        http: reqwest::Client::new(),
     };
 
     let app = Router::new()
@@ -52,7 +48,7 @@ async fn main() {
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());
 
-    let addr: SocketAddr = pagi_http::config::bind_addr(([0, 0, 0, 0], 7007).into());
+    let addr: SocketAddr = pagi_http::config::bind_addr(([0, 0, 0, 0], 8007).into());
     tracing::info!(%addr, "listening");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -74,26 +70,13 @@ async fn set_state(
 ) -> Json<EmotionState> {
     state.store.write().await.insert(twin_id, new_state.clone());
 
-    publish_event(
-        &state,
-        EventEnvelope::new(
-            EventType::EmotionStateUpdated,
-            json!({"twin_id": twin_id, "mood": new_state.mood, "stress": new_state.stress}),
-        ),
-    )
-    .await;
+    let mut ev = EventEnvelope::new(
+        EventType::EmotionStateUpdated,
+        json!({"twin_id": twin_id, "mood": new_state.mood, "stress": new_state.stress}),
+    );
+    ev.twin_id = Some(twin_id);
+    ev.source = Some("pagi-emotion-state-manager".to_string());
+    let _ = publish_event(ev).await;
 
     Json(new_state)
-}
-
-async fn publish_event(state: &AppState, mut ev: EventEnvelope) {
-    let Some(url) = state.event_router_url.as_deref() else {
-        return;
-    };
-    ev.source = Some("pagi-emotion-state-manager".to_string());
-    let endpoint = format!("{}/publish", url.trim_end_matches('/'));
-    let res = state.http.post(endpoint).json(&ev).send().await;
-    if let Err(err) = res {
-        tracing::warn!(error = %err, "failed to publish event");
-    }
 }

@@ -8,3 +8,7 @@ target/
 # Environment
 .env
 
+# Build tools and cache
+tools/
+.cargo/
+

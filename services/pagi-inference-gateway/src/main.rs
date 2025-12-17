@@ -4,7 +4,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use pagi_common::{EventEnvelope, EventType};
+use pagi_common::{publish_event, EventEnvelope, EventType};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::net::SocketAddr;
@@ -13,8 +13,6 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 struct AppState {
-    event_router_url: Option<String>,
-    http: reqwest::Client,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,8 +35,6 @@ async fn main() {
     pagi_http::tracing::init("pagi-inference-gateway");
 
     let state = AppState {
-        event_router_url: std::env::var("EVENT_ROUTER_URL").ok(),
-        http: reqwest::Client::new(),
     };
 
     let app = Router::new()
@@ -48,7 +44,7 @@ async fn main() {
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());
 
-    let addr: SocketAddr = pagi_http::config::bind_addr(([0, 0, 0, 0], 7005).into());
+    let addr: SocketAddr = pagi_http::config::bind_addr(([0, 0, 0, 0], 8005).into());
     tracing::info!(%addr, "listening");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -58,15 +54,14 @@ async fn healthz() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok")
 }
 
-async fn infer(State(state): State<AppState>, Json(req): Json<InferRequest>) -> Result<Json<InferResponse>, (StatusCode, String)> {
-    publish_event(
-        &state,
-        EventEnvelope::new(
-            EventType::InferenceRequested,
-            json!({"twin_id": req.twin_id, "has_context": req.context.is_some()}),
-        ),
-    )
-    .await;
+async fn infer(State(_state): State<AppState>, Json(req): Json<InferRequest>) -> Result<Json<InferResponse>, (StatusCode, String)> {
+    let mut ev = EventEnvelope::new(
+        EventType::InferenceRequested,
+        json!({"twin_id": req.twin_id, "has_context": req.context.is_some()}),
+    );
+    ev.twin_id = Some(req.twin_id);
+    ev.source = Some("pagi-inference-gateway".to_string());
+    let _ = publish_event(ev).await;
 
     // MVP mock model adapter: returns a deterministic response.
     let output = if let Some(ctx) = &req.context {
@@ -75,14 +70,13 @@ async fn infer(State(state): State<AppState>, Json(req): Json<InferRequest>) -> 
         format!("[mock-model] Input:\n{}", req.input)
     };
 
-    publish_event(
-        &state,
-        EventEnvelope::new(
-            EventType::InferenceCompleted,
-            json!({"twin_id": req.twin_id, "output_len": output.len()}),
-        ),
-    )
-    .await;
+    let mut ev = EventEnvelope::new(
+        EventType::InferenceCompleted,
+        json!({"twin_id": req.twin_id, "output_len": output.len()}),
+    );
+    ev.twin_id = Some(req.twin_id);
+    ev.source = Some("pagi-inference-gateway".to_string());
+    let _ = publish_event(ev).await;
 
     Ok(Json(InferResponse {
         twin_id: req.twin_id,
@@ -90,16 +84,3 @@ async fn infer(State(state): State<AppState>, Json(req): Json<InferRequest>) -> 
         output,
     }))
 }
-
-async fn publish_event(state: &AppState, mut ev: EventEnvelope) {
-    let Some(url) = state.event_router_url.as_deref() else {
-        return;
-    };
-    ev.source = Some("pagi-inference-gateway".to_string());
-    let endpoint = format!("{}/publish", url.trim_end_matches('/'));
-    let res = state.http.post(endpoint).json(&ev).send().await;
-    if let Err(err) = res {
-        tracing::warn!(error = %err, "failed to publish event");
-    }
-}
-

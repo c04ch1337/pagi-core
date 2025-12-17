@@ -1,8 +1,9 @@
 use axum::{
-    extract::State,
-    http::StatusCode,
     routing::{get, post},
-    Json, Router,
+    extract::{Path, State, Json},
+    http::StatusCode,
+    response::IntoResponse,
+    Router,
 };
 use pagi_common::{publish_event, EventEnvelope, EventType};
 use serde::{Deserialize, Serialize};
@@ -33,7 +34,7 @@ struct BuildResponse {
 
 #[tokio::main]
 async fn main() {
-    pagi_http::tracing::init("pagi-context-builder");
+    pagi_http::tracing::init("pagi-context-engine");
 
     let state = AppState {
         working_memory_url: std::env::var("WORKING_MEMORY_URL")
@@ -95,8 +96,9 @@ async fn build_context(State(state): State<AppState>, Json(req): Json<BuildReque
 
     let mut ev = EventEnvelope::new(EventType::ContextBuilt, json!({"twin_id": req.twin_id}));
     ev.twin_id = Some(req.twin_id);
-    ev.source = Some("pagi-context-builder".to_string());
+    ev.source = Some("pagi-context-engine".to_string());
     let _ = publish_event(ev).await;
 
     Ok(Json(resp))
 }
+

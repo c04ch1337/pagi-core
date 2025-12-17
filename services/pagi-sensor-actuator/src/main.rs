@@ -4,7 +4,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use pagi_common::{EventEnvelope, EventType};
+use pagi_common::{publish_event, EventEnvelope, EventType};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::net::SocketAddr;
@@ -12,8 +12,6 @@ use tower_http::{cors::CorsLayer, trace::TraceLayer};
 
 #[derive(Clone)]
 struct AppState {
-    event_router_url: Option<String>,
-    http: reqwest::Client,
 }
 
 #[derive(Debug, Deserialize)]
@@ -34,8 +32,6 @@ async fn main() {
     pagi_http::tracing::init("pagi-sensor-actuator");
 
     let state = AppState {
-        event_router_url: std::env::var("EVENT_ROUTER_URL").ok(),
-        http: reqwest::Client::new(),
     };
 
     let app = Router::new()
@@ -45,7 +41,7 @@ async fn main() {
         .layer(TraceLayer::new_for_http())
         .layer(CorsLayer::permissive());
 
-    let addr: SocketAddr = pagi_http::config::bind_addr(([0, 0, 0, 0], 7008).into());
+    let addr: SocketAddr = pagi_http::config::bind_addr(([0, 0, 0, 0], 8008).into());
     tracing::info!(%addr, "listening");
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
@@ -55,12 +51,10 @@ async fn healthz() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok")
 }
 
-async fn act(State(state): State<AppState>, Json(req): Json<ActionRequest>) -> (StatusCode, Json<ActionResponse>) {
-    publish_event(
-        &state,
-        EventEnvelope::new(EventType::ActionRequested, json!({"tool": req.tool, "args": req.args})),
-    )
-    .await;
+async fn act(State(_state): State<AppState>, Json(req): Json<ActionRequest>) -> (StatusCode, Json<ActionResponse>) {
+    let mut ev = EventEnvelope::new(EventType::ActionRequested, json!({"tool": req.tool, "args": req.args}));
+    ev.source = Some("pagi-sensor-actuator".to_string());
+    let _ = publish_event(ev).await;
 
     // Intentionally minimal: actions are not executed in MVP.
     (
@@ -71,16 +65,3 @@ async fn act(State(state): State<AppState>, Json(req): Json<ActionRequest>) -> (
         }),
     )
 }
-
-async fn publish_event(state: &AppState, mut ev: EventEnvelope) {
-    let Some(url) = state.event_router_url.as_deref() else {
-        return;
-    };
-    ev.source = Some("pagi-sensor-actuator".to_string());
-    let endpoint = format!("{}/publish", url.trim_end_matches('/'));
-    let res = state.http.post(endpoint).json(&ev).send().await;
-    if let Err(err) = res {
-        tracing::warn!(error = %err, "failed to publish event");
-    }
-}
-
