@@ -1,8 +1,8 @@
+use axum::response::IntoResponse;
 use axum::{
     routing::{get, post},
     extract::{Path, State, Json},
     http::StatusCode,
-    response::IntoResponse,
     Router,
 };
 use pagi_common::{publish_event, EventEnvelope, EventType};
@@ -59,21 +59,24 @@ async fn healthz() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok")
 }
 
-async fn build_context(State(state): State<AppState>, Json(req): Json<BuildRequest>) -> Result<Json<BuildResponse>, (StatusCode, String)> {
+async fn build_context(State(state): State<AppState>, Json(req): Json<BuildRequest>) -> impl IntoResponse {
     let mem_endpoint = format!(
         "{}/memory/{}",
         state.working_memory_url.trim_end_matches('/'),
         req.twin_id
     );
-    let mem: Vec<serde_json::Value> = state
+    let mem: Vec<serde_json::Value> = match state
         .http
         .get(mem_endpoint)
         .send()
         .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?
-        .json()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+    {
+        Ok(response) => match response.json().await {
+            Ok(json) => json,
+            Err(e) => return (StatusCode::BAD_GATEWAY, format!("Failed to parse response: {e}")),
+        },
+        Err(e) => return (StatusCode::BAD_GATEWAY, format!("Failed to fetch memory: {e}")),
+    };
 
     let mut context = String::new();
     context.push_str("# Working Memory\n");
@@ -99,6 +102,5 @@ async fn build_context(State(state): State<AppState>, Json(req): Json<BuildReque
     ev.source = Some("pagi-context-engine".to_string());
     let _ = publish_event(ev).await;
 
-    Ok(Json(resp))
+    (StatusCode::OK, Json(resp))
 }
-

@@ -44,6 +44,7 @@ struct InteractResponse {
 
 #[derive(Debug, Deserialize)]
 struct ContextBuildResponse {
+    #[allow(dead_code)]
     pub twin_id: Uuid,
     pub context: String,
 }
