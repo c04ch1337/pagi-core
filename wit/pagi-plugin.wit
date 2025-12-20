@@ -1,0 +1,11 @@
+package pagi:plugin@0.1.0;
+
+world pagi-plugin-world {
+    // Minimal, future-proof surface: plugins provide an execute entry point.
+    // Host can optionally call register-tool during discovery to let the component
+    // validate or initialize internal routing.
+
+    export register-tool: func(name: string, description: string, endpoint: string) -> result<unit, string>;
+    export execute: func(params: string) -> result<string, string>;
+}
+

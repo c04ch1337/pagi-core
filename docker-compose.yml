@@ -21,6 +21,11 @@ services:
     ports:
       - "29092:29092"
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
   pagi-event-router:
     build:
       context: .
@@ -45,10 +50,64 @@ services:
     environment:
       - RUST_LOG=info
       - BIND_ADDR=0.0.0.0:8010
+      - REDIS_URL=redis://redis:6379
+      - AUTO_DISCOVER_PLUGINS=true
+      - PLUGIN_DIR=/plugins
+    volumes:
+      - ./plugins:/plugins
     ports:
       - "8010:8010"
     depends_on:
       - kafka
+      - redis
+
+  pagi-swarm-sync-plugin:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        SERVICE: pagi-swarm-sync-plugin
+    environment:
+      - RUST_LOG=info
+      - BIND_ADDR=0.0.0.0:9010
+      - EXTERNAL_GATEWAY_URL=http://pagi-external-gateway:8010
+      - PLUGIN_URL=http://pagi-swarm-sync-plugin:9010
+      - SWARM_LOCAL_PATH=/data/repo
+      - SWARM_BASE_BRANCH=main
+      # Provide these in your environment or via an .env file:
+      # - SWARM_REPO_URL=https://github.com/ORG/REPO.git
+      # - GIT_USERNAME=...
+      # - GIT_TOKEN=...
+    volumes:
+      - ./swarm-repo:/data/repo
+    ports:
+      - "9010:9010"
+    depends_on:
+      - pagi-external-gateway
+
+  pagi-hive-sync-plugin:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        SERVICE: pagi-hive-sync-plugin
+    environment:
+      - RUST_LOG=info
+      - BIND_ADDR=0.0.0.0:9050
+      - EXTERNAL_GATEWAY_URL=http://pagi-external-gateway:8010
+      - PLUGIN_URL=http://pagi-hive-sync-plugin:9050
+      - HIVE_LOCAL_PATH=/data/hive-repo
+      - HIVE_BASE_BRANCH=main
+      # Provide these in your environment or via an .env file:
+      # - HIVE_REPO_URL=https://github.com/ORG/REPO.git
+      # - GIT_USERNAME=...
+      # - GIT_TOKEN=...
+    volumes:
+      - ./hive-repo:/data/hive-repo
+    ports:
+      - "9050:9050"
+    depends_on:
+      - pagi-external-gateway
 
   pagi-working-memory:
     build:
@@ -107,10 +166,73 @@ services:
       - RUST_LOG=info
       - BIND_ADDR=0.0.0.0:8002
       - EVENT_ROUTER_URL=http://pagi-event-router:8000
+      - IDENTITY_DATA_DIR=/data/identity
+    volumes:
+      - ./identity-data:/data/identity
     ports:
       - "8002:8002"
     depends_on:
       - pagi-event-router
+
+  pagi-did-plugin:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        SERVICE: pagi-did-plugin
+    environment:
+      - RUST_LOG=info
+      - BIND_ADDR=0.0.0.0:9020
+      - EXTERNAL_GATEWAY_URL=http://pagi-external-gateway:8010
+      - PLUGIN_URL=http://pagi-did-plugin:9020
+      - IDENTITY_KEYS_DIR=/data/identity/keys
+    volumes:
+      - ./identity-data:/data/identity:ro
+    ports:
+      - "9020:9020"
+    depends_on:
+      - pagi-external-gateway
+      - pagi-identity-service
+
+  pagi-didcomm-plugin:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        SERVICE: pagi-didcomm-plugin
+    environment:
+      - RUST_LOG=info
+      - BIND_ADDR=0.0.0.0:9030
+      - EXTERNAL_GATEWAY_URL=http://pagi-external-gateway:8010
+      - PLUGIN_URL=http://pagi-didcomm-plugin:9030
+      - IDENTITY_KEYS_DIR=/data/identity/keys
+    volumes:
+      - ./identity-data:/data/identity:ro
+    ports:
+      - "9030:9030"
+    depends_on:
+      - pagi-external-gateway
+      - pagi-identity-service
+
+  pagi-vc-plugin:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        SERVICE: pagi-vc-plugin
+    environment:
+      - RUST_LOG=info
+      - BIND_ADDR=0.0.0.0:9040
+      - EXTERNAL_GATEWAY_URL=http://pagi-external-gateway:8010
+      - PLUGIN_URL=http://pagi-vc-plugin:9040
+      - IDENTITY_KEYS_DIR=/data/identity/keys
+    volumes:
+      - ./identity-data:/data/identity:ro
+    ports:
+      - "9040:9040"
+    depends_on:
+      - pagi-external-gateway
+      - pagi-identity-service
 
   pagi-executive-engine:
     build:

@@ -1,0 +1,35 @@
+[package]
+name = "pagi-updater-plugin"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+axum.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+reqwest.workspace = true
+tower-http.workspace = true
+uuid.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+
+pagi-common = { path = "../../common/pagi-common" }
+pagi-http = { path = "../../common/pagi-http" }
+
+# Used for GitHub Releases-based updates (future: could switch backend without touching core).
+self_update = "0.40"
+
+semver = "1"
+sha2 = "0.10"
+hex = "0.4"
+tempfile = "3"
+
+# Archive extraction support (common release formats)
+flate2 = "1"
+tar = "0.4"
+zip = "2"
+walkdir = "2"
+

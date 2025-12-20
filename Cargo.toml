@@ -16,6 +16,12 @@ members = [
   "services/pagi-external-gateway",
 
   "plugins/pagi-monitoring-plugin",
+  "plugins/pagi-swarm-sync-plugin",
+  "plugins/pagi-hive-sync-plugin",
+  "plugins/pagi-did-plugin",
+  "plugins/pagi-didcomm-plugin",
+  "plugins/pagi-vc-plugin",
+  "plugins/pagi-updater-plugin",
 ]
 
 [workspace.package]
@@ -26,11 +32,12 @@ license = "MIT"
 axum = { version = "0.7", features = ["json", "macros"] }
 clap = { version = "4", features = ["derive", "env"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+tower = "0.5"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 thiserror = "2"
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "process"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 tracing = "0.1"
@@ -38,3 +45,39 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt", "time"]
 uuid = { version = "1", features = ["v4", "serde"] }
 time = { version = "0.3", features = ["serde", "formatting"] }
 rdkafka = { version = "0.36", features = ["cmake-build"] }
+
+# Common utilities (future-facing; safe to have workspace-wide)
+once_cell = "1"
+async-trait = "0.1"
+rand = "0.8"
+base64 = "0.22"
+
+# Phase 4: persistent registry + auto-discovery
+redis = { version = "0.27", features = ["tokio-comp"] }
+notify = "6.1"
+toml = "0.8"
+libloading = "0.8"
+
+# Swarm sync plugin
+git2 = "0.18"
+
+# DID / signatures
+ed25519-dalek = { version = "2.1", features = ["rand_core", "serde"] }
+rand_core = { version = "0.6", features = ["getrandom"] }
+multibase = "0.9"
+
+# WASI Component Model (Phase 4+)
+wasmtime = { version = "25.0", features = ["component-model"] }
+wasmtime-wasi = "25.0"
+wit-bindgen = "0.32"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# Convenience profile for static builds (target selection is done via `--target`).
+[profile.release-musl]
+inherits = "release"

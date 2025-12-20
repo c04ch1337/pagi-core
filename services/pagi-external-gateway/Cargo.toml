@@ -12,7 +12,20 @@ serde_json.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 uuid.workspace = true
-once_cell = "1.19"
+redis.workspace = true
+notify.workspace = true
+toml.workspace = true
+libloading.workspace = true
+wasmtime.workspace = true
+wasmtime-wasi.workspace = true
+
+[features]
+# Phase 5: optional hardening features
+seccomp = ["dep:libscmp", "dep:libc"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libscmp = { version = "0.2", optional = true }
+libc = { version = "0.2", optional = true }
 
 pagi-common = { path = "../../common/pagi-common" }
 pagi-http = { path = "../../common/pagi-http" }
