@@ -13,6 +13,7 @@ members = [
   "services/pagi-executive-engine",
   "services/pagi-emotion-state-manager",
   "services/pagi-sensor-actuator",
+  "services/pagi-external-gateway",
 
   "plugins/pagi-monitoring-plugin",
 ]
@@ -28,11 +29,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
-eventsource-stream = "0.2"
-futures-util = "0.3"
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
-tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-util = { version = "0.7", features = ["io"] }
 tower-http = { version = "0.6", features = ["trace", "cors"] }
 tracing = "0.1"

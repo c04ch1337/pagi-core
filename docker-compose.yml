@@ -30,10 +30,23 @@ services:
     environment:
       - RUST_LOG=info
       - BIND_ADDR=0.0.0.0:8000
-      - EVENT_ROUTER_MODE=kafka
       - KAFKA_BROKERS=kafka:9092
     ports:
       - "8000:8000"
+    depends_on:
+      - kafka
+
+  pagi-external-gateway:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.service
+      args:
+        SERVICE: pagi-external-gateway
+    environment:
+      - RUST_LOG=info
+      - BIND_ADDR=0.0.0.0:8010
+    ports:
+      - "8010:8010"
     depends_on:
       - kafka
 
@@ -113,6 +126,7 @@ services:
       - INFERENCE_GATEWAY_URL=http://pagi-inference-gateway:8005
       - EMOTION_STATE_URL=http://pagi-emotion-state-manager:8007
       - SENSOR_ACTUATOR_URL=http://pagi-sensor-actuator:8008
+      - EXTERNAL_GATEWAY_URL=http://pagi-external-gateway:8010
     ports:
       - "8006:8006"
     depends_on:
@@ -121,6 +135,7 @@ services:
       - pagi-inference-gateway
       - pagi-emotion-state-manager
       - pagi-sensor-actuator
+      - pagi-external-gateway
 
   pagi-emotion-state-manager:
     build:

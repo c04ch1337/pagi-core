@@ -4,9 +4,9 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use pagi_common::{publish_event, CoreEvent, EventEnvelope, EventType};
+use pagi_common::{publish_event, CoreEvent, EventEnvelope, EventType, TwinId};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use std::net::SocketAddr;
 use tower_http::{cors::CorsLayer, trace::TraceLayer};
 use uuid::Uuid;
@@ -17,6 +17,7 @@ struct AppState {
     inference_gateway_url: String,
     emotion_state_url: String,
     sensor_actuator_url: String,
+    external_gateway_url: String,
     http: reqwest::Client,
 }
 
@@ -61,6 +62,30 @@ struct EmotionState {
     pub stress: Option<f32>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ToolSchema {
+    pub name: String,
+    #[allow(dead_code)]
+    pub description: String,
+    #[allow(dead_code)]
+    pub plugin_url: String,
+    #[allow(dead_code)]
+    pub endpoint: String,
+    #[allow(dead_code)]
+    pub parameters: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct ToolsResponse {
+    pub tools: Vec<ToolSchema>,
+}
+
+#[derive(Debug, Serialize)]
+struct ExecuteToolRequest {
+    pub twin_id: TwinId,
+    pub parameters: Value,
+}
+
 #[tokio::main]
 async fn main() {
     pagi_http::tracing::init("pagi-executive-engine");
@@ -70,6 +95,7 @@ async fn main() {
         inference_gateway_url: std::env::var("INFERENCE_GATEWAY_URL").unwrap_or_else(|_| "http://127.0.0.1:8005".to_string()),
         emotion_state_url: std::env::var("EMOTION_STATE_URL").unwrap_or_else(|_| "http://127.0.0.1:8007".to_string()),
         sensor_actuator_url: std::env::var("SENSOR_ACTUATOR_URL").unwrap_or_else(|_| "http://127.0.0.1:8008".to_string()),
+        external_gateway_url: std::env::var("EXTERNAL_GATEWAY_URL").unwrap_or_else(|_| "http://127.0.0.1:8010".to_string()),
         http: reqwest::Client::new(),
     };
 
@@ -162,15 +188,68 @@ async fn interact(
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
 
-    // 5) Generate plan (stub)
-    let plan = format!("Plan: {} | mood={} stress={:?}", inf.output, emotion.mood, emotion.stress);
+    // 5) Discover available tools from ExternalGateway
+    let tools_url = format!("{}/tools", state.external_gateway_url.trim_end_matches('/'));
+    let tools_response: ToolsResponse = state
+        .http
+        .get(tools_url)
+        .send()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?
+        .error_for_status()
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?
+        .json()
+        .await
+        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
 
-    // 6) Publish PlanGenerated
+    // 6) Generate plan incorporating available tools
+    let tool_names: Vec<String> = tools_response.tools.iter().map(|t| t.name.clone()).collect();
+    let tools_summary = if tool_names.is_empty() {
+        "No external tools available".to_string()
+    } else {
+        format!("Available tools: {}", tool_names.join(", "))
+    };
+
+    let plan = format!(
+        "Plan: {} | mood={} stress={:?} | {}",
+        inf.output, emotion.mood, emotion.stress, tools_summary
+    );
+
+    // 7) Publish PlanGenerated
     let mut plan_ev = EventEnvelope::new_core(twin_id, CoreEvent::PlanGenerated { plan: plan.clone() });
     plan_ev.source = Some("pagi-executive-engine".to_string());
     let _ = publish_event(plan_ev).await;
 
-    // 7) Send to SensorActuator (still a no-op executor)
+    // 8) Execute a sample tool if available (for demonstration)
+    if let Some(sample_tool) = tools_response.tools.first() {
+        let execute_url = format!(
+            "{}/execute/{}",
+            state.external_gateway_url.trim_end_matches('/'),
+            sample_tool.name
+        );
+
+        let execute_payload = ExecuteToolRequest {
+            twin_id: TwinId(twin_id),
+            parameters: json!({"goal": req.goal}),
+        };
+
+        match state.http.post(execute_url).json(&execute_payload).send().await {
+            Ok(resp) => {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                if status.is_success() {
+                    tracing::info!(twin_id = %twin_id, tool_name = %sample_tool.name, "Sample tool executed: {body}");
+                } else {
+                    tracing::warn!(twin_id = %twin_id, tool_name = %sample_tool.name, "Sample tool failed: {status} {body}");
+                }
+            }
+            Err(err) => {
+                tracing::warn!(twin_id = %twin_id, tool_name = %sample_tool.name, error = %err, "Sample tool call failed");
+            }
+        }
+    }
+
+    // 9) Send to SensorActuator
     let act_url = format!("{}/act", state.sensor_actuator_url.trim_end_matches('/'));
     state
         .http
