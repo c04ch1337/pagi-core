@@ -22,6 +22,7 @@
 - [Plugin System](#plugin-system)
 - [Decentralized Identity (DID) System](#decentralized-identity-did-system)
 - [SWARM/Playbook System](#swarmplaybook-system)
+- [Open Cluster Management (OCM) Orchestration](#open-cluster-management-ocm-orchestration)
 - [Event System](#event-system)
 - [Phase 6: Real-World Swarm Deployment & Data Collection](#phase-6-real-world-swarm-deployment--data-collection)
 - [Development Guide](#development-guide)
@@ -2750,6 +2751,531 @@ The MO's meta-learning creates a **positive feedback loop** where each improveme
 - **Multi-Repository**: Support for multiple playbook repositories
 - **Playbook Templates**: Domain-specific playbook templates
 - **A/B Testing**: Test playbook improvements before full adoption
+
+---
+
+## Open Cluster Management (OCM) Orchestration
+
+### Overview
+
+**Open Cluster Management (OCM)** is a Kubernetes-based multi-cluster orchestration system that enables PAGI-Core to manage distributed Kubernetes clusters at scale. The `pagi-ocm-orchestration-plugin` provides the Master Orchestrator (MO) with tools to coordinate, deploy, and scale PAGI twins across multiple Kubernetes clusters, transforming PAGI-Core from a single-instance system into a **distributed, multi-cluster AGI swarm**.
+
+OCM follows a **hub-and-spoke architecture**:
+- **Hub Cluster (GENERAL/MO)**: The central orchestrator that manages all spoke clusters
+- **Spoke Clusters**: Remote Kubernetes clusters where PAGI twins execute tasks
+- **ManifestWork**: OCM's declarative API for deploying resources to spoke clusters
+
+### Architecture
+
+```mermaid
+graph TB
+    subgraph "Hub Cluster (GENERAL/MO)"
+        MO[Master Orchestrator]
+        OCMPlugin[OCM Orchestration Plugin]
+        KubeAPI[Kubernetes API]
+    end
+    
+    subgraph "Spoke Cluster 1"
+        Twin1[PAGI Twin 1]
+        Agent1[OCM Agent]
+    end
+    
+    subgraph "Spoke Cluster 2"
+        Twin2[PAGI Twin 2]
+        Agent2[OCM Agent]
+    end
+    
+    subgraph "Spoke Cluster N"
+        TwinN[PAGI Twin N]
+        AgentN[OCM Agent]
+    end
+    
+    MO -->|Calls Tools| OCMPlugin
+    OCMPlugin -->|ManifestWork| KubeAPI
+    KubeAPI -->|Sync| Agent1
+    KubeAPI -->|Sync| Agent2
+    KubeAPI -->|Sync| AgentN
+    Agent1 -->|Reconcile| Twin1
+    Agent2 -->|Reconcile| Twin2
+    AgentN -->|Reconcile| TwinN
+```
+
+### Core Concepts
+
+#### Hub Cluster (GENERAL)
+
+The **Hub Cluster** is the central control plane where the **Master Orchestrator (MO)** runs. It:
+- **Manages** all spoke clusters via OCM APIs
+- **Deploys** playbooks and configurations to spokes
+- **Scales** clusters based on workload
+- **Monitors** cluster health and twin performance
+- **Validates** refinement artifacts from all spokes
+
+#### Spoke Clusters
+
+**Spoke Clusters** are remote Kubernetes clusters that:
+- **Host** PAGI twins executing tasks
+- **Run** OCM agents that reconcile ManifestWork resources
+- **Report** status back to the hub
+- **Execute** playbooks deployed from the hub
+
+#### ManifestWork
+
+**ManifestWork** is OCM's declarative API for deploying Kubernetes resources to spoke clusters:
+- **Created** by the OCM plugin on the hub
+- **Synced** to spoke clusters by OCM agents
+- **Reconciled** by spoke-side controllers
+- **Status** reported back to the hub
+
+### Implementation
+
+The `pagi-ocm-orchestration-plugin` provides three core tools:
+
+#### 1. `list_clusters`
+
+Lists all managed OCM spoke clusters (ManagedCluster resources).
+
+**Tool Schema**:
+```json
+{
+  "name": "list_clusters",
+  "description": "List managed OCM spoke clusters (ManagedCluster resources)",
+  "parameters": {
+    "type": "object"
+  }
+}
+```
+
+**Example Usage**:
+```bash
+curl -X POST http://localhost:8010/execute/list_clusters \
+  -H "Content-Type: application/json" \
+  -d '{}'
+```
+
+**Response**:
+```json
+{
+  "clusters": ["spoke-cluster-1", "spoke-cluster-2", "spoke-cluster-3"]
+}
+```
+
+#### 2. `deploy_playbook`
+
+Deploys a playbook (CID/commit hash) to a target cluster via ManifestWork. The playbook is packaged as a ConfigMap and deployed to the spoke cluster.
+
+**Tool Schema**:
+```json
+{
+  "name": "deploy_playbook",
+  "description": "Deploy a playbook (CID/commit) to a target cluster via ManifestWork",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "cluster_name": {"type": "string"},
+      "playbook_cid": {"type": "string"}
+    },
+    "required": ["cluster_name", "playbook_cid"]
+  }
+}
+```
+
+**Example Usage**:
+```bash
+curl -X POST http://localhost:8010/execute/deploy_playbook \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cluster_name": "spoke-cluster-1",
+    "playbook_cid": "QmXyZ123..."
+  }'
+```
+
+**Response**:
+```json
+{
+  "ok": true,
+  "manifestwork_name": "pagi-playbook-qmxyz123"
+}
+```
+
+**What Happens**:
+1. Plugin creates a `ManifestWork` resource in the hub cluster
+2. ManifestWork contains a ConfigMap with the playbook CID
+3. OCM agent syncs the ManifestWork to the spoke cluster
+4. Spoke-side controller reconciles the ConfigMap
+5. Twin on spoke cluster reads the playbook and applies it
+
+#### 3. `scale_cluster`
+
+Requests a cluster scale operation (MVP: records desired_nodes via ManifestWork). The actual scaling is handled by spoke-side infrastructure controllers.
+
+**Tool Schema**:
+```json
+{
+  "name": "scale_cluster",
+  "description": "Request a cluster scale operation (MVP: records desired_nodes via ManifestWork)",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "cluster_name": {"type": "string"},
+      "desired_nodes": {"type": "integer", "minimum": 0}
+    },
+    "required": ["cluster_name", "desired_nodes"]
+  }
+}
+```
+
+**Example Usage**:
+```bash
+curl -X POST http://localhost:8010/execute/scale_cluster \
+  -H "Content-Type: application/json" \
+  -d '{
+    "cluster_name": "spoke-cluster-1",
+    "desired_nodes": 5
+  }'
+```
+
+**Response**:
+```json
+{
+  "ok": true,
+  "manifestwork_name": "pagi-scale-5"
+}
+```
+
+**What Happens**:
+1. Plugin creates a `ManifestWork` with a ConfigMap containing `desired_nodes`
+2. ManifestWork is synced to the spoke cluster
+3. Spoke-side infrastructure controller (e.g., K3s autoscaler) reads the ConfigMap
+4. Controller scales the cluster to the desired node count
+5. Status is reported back to the hub
+
+### Setting the MAIN MO as the GENERAL (Hub)
+
+To configure the **Master Orchestrator (MO)** as the **GENERAL** (hub cluster orchestrator), follow these steps:
+
+#### 1. Prerequisites
+
+- **Kubernetes cluster** with OCM installed (hub cluster)
+- **kubeconfig** configured to access the hub cluster
+- **OCM agents** running on spoke clusters
+- **OCM plugin** deployed and running
+
+#### 2. Environment Configuration
+
+Set the following environment variables on the MO instance:
+
+```bash
+# Enable MO as GENERAL (hub orchestrator)
+IS_MO=true
+
+# OCM Plugin Configuration
+EXTERNAL_GATEWAY_URL=http://127.0.0.1:8010
+PLUGIN_URL=http://127.0.0.1:8095
+
+# Kubernetes Configuration
+# Option 1: In-cluster config (if MO runs in Kubernetes)
+# KUBERNETES_SERVICE_HOST and KUBERNETES_SERVICE_PORT are auto-detected
+
+# Option 2: kubeconfig file (if MO runs outside Kubernetes)
+KUBECONFIG=/path/to/kubeconfig
+
+# Optional: Namespace for OCM resources
+OCM_NAMESPACE=open-cluster-management
+```
+
+#### 3. Deploy OCM Plugin
+
+The OCM plugin automatically registers its tools with the External Gateway on startup. Ensure it's running:
+
+```bash
+# Start the OCM plugin
+./pagi-ocm-orchestration-plugin
+
+# Verify registration
+curl http://localhost:8010/tools
+# Should include: list_clusters, deploy_playbook, scale_cluster
+```
+
+#### 4. Verify Hub Access
+
+Test that the MO can access the hub cluster:
+
+```bash
+# Via MO's Executive Engine
+curl -X POST http://localhost:8006/interact/{twin_id} \
+  -H "Content-Type: application/json" \
+  -d '{
+    "goal": "List all managed OCM clusters"
+  }'
+
+# MO will call list_clusters tool and return cluster names
+```
+
+#### 5. Configure Spoke Clusters
+
+For each spoke cluster, ensure:
+- **OCM agent** is installed and running
+- **ManagedCluster** resource exists in the hub
+- **Spoke cluster** is registered with the hub
+
+```bash
+# On hub cluster, verify spoke registration
+kubectl get managedclusters
+
+# Should show:
+# NAME              HUB ACCEPTED   MANAGED CLUSTER URLS
+# spoke-cluster-1   true           https://spoke-1.example.com
+# spoke-cluster-2   true           https://spoke-2.example.com
+```
+
+#### 6. MO as GENERAL Workflow
+
+Once configured, the MO acts as the GENERAL:
+
+1. **Receives goals** from users or other twins
+2. **Plans** which clusters should execute tasks
+3. **Calls OCM tools** to deploy playbooks to selected clusters
+4. **Monitors** cluster status and twin performance
+5. **Collects** refinement artifacts from all spokes
+6. **Validates** and merges improvements into the global playbook
+7. **Deploys** updated playbooks to all spokes
+
+### Use Cases
+
+#### Use Case 1: Distributed Research Swarm
+
+**Scenario**: Deploy 100 PAGI twins across 10 Kubernetes clusters to conduct parallel research on quantum computing.
+
+**Flow**:
+1. **MO (GENERAL)** receives goal: "Research quantum error correction across 100 parallel experiments"
+2. **MO plans**: Deploy 10 twins per cluster across 10 spoke clusters
+3. **MO calls** `list_clusters` → identifies 10 available clusters
+4. **MO calls** `deploy_playbook` 10 times → deploys research playbook to each cluster
+5. **MO calls** `scale_cluster` → ensures each cluster has enough nodes for 10 twins
+6. **Twins execute** research tasks in parallel
+7. **Twins generate** refinement artifacts → pushed to GitHub
+8. **MO validates** artifacts → merges best improvements
+9. **MO deploys** updated playbook → all clusters get improvements
+
+**Benefits**:
+- **100x parallelism** across distributed infrastructure
+- **Automatic scaling** based on workload
+- **Centralized coordination** via MO
+- **Collective learning** from all twins
+
+#### Use Case 2: Multi-Region AGI Deployment
+
+**Scenario**: Deploy PAGI twins in multiple geographic regions (US, EU, Asia) for low-latency user interactions.
+
+**Flow**:
+1. **MO (GENERAL)** receives goal: "Deploy twins in US, EU, and Asia regions"
+2. **MO identifies** clusters: `us-east-1`, `eu-west-1`, `ap-southeast-1`
+3. **MO calls** `deploy_playbook` → deploys region-specific playbooks
+4. **MO configures** each region with local optimizations (language, timezone, regulations)
+5. **Twins execute** user tasks with low latency
+6. **MO aggregates** performance metrics from all regions
+7. **MO generates** global improvements → deploys to all regions
+
+**Benefits**:
+- **Low latency** for users in each region
+- **Compliance** with regional regulations (GDPR, etc.)
+- **Resilience** via geographic distribution
+- **Unified** coordination via single MO
+
+#### Use Case 3: Dynamic Cluster Scaling for Burst Workloads
+
+**Scenario**: Handle sudden spike in research requests by automatically scaling clusters.
+
+**Flow**:
+1. **MO (GENERAL)** detects high queue depth: 1000 pending tasks
+2. **MO analyzes** current capacity: 5 clusters × 20 twins = 100 concurrent tasks
+3. **MO plans**: Scale to 20 clusters × 20 twins = 400 concurrent tasks
+4. **MO calls** `list_clusters` → identifies available clusters
+5. **MO calls** `scale_cluster` → scales each cluster to 20 nodes
+6. **MO calls** `deploy_playbook` → deploys playbook to new clusters
+7. **Twins execute** tasks → queue clears
+8. **MO monitors** → scales down when workload decreases
+
+**Benefits**:
+- **Automatic scaling** based on demand
+- **Cost optimization** via scale-down
+- **Zero-downtime** scaling
+- **MO-driven** orchestration
+
+#### Use Case 4: A/B Testing Playbook Improvements
+
+**Scenario**: Test a new playbook improvement on 10% of clusters before full rollout.
+
+**Flow**:
+1. **MO (GENERAL)** receives refinement artifact: "New optimization improves task success by 30%"
+2. **MO validates** artifact → checks metrics, signatures, ethics
+3. **MO selects** 10% of clusters for A/B test: `spoke-cluster-1`, `spoke-cluster-2`
+4. **MO calls** `deploy_playbook` → deploys new playbook to test clusters
+5. **MO monitors** performance → compares test vs. control clusters
+6. **MO validates** results → 30% improvement confirmed
+7. **MO calls** `deploy_playbook` → deploys to all clusters
+8. **MO records** improvement in global playbook
+
+**Benefits**:
+- **Safe testing** before full rollout
+- **Data-driven** decisions
+- **Automatic validation** via MO
+- **Gradual rollout** reduces risk
+
+#### Use Case 5: Disaster Recovery and Cluster Failover
+
+**Scenario**: Primary cluster fails; MO automatically fails over to backup clusters.
+
+**Flow**:
+1. **MO (GENERAL)** detects cluster failure: `spoke-cluster-1` unreachable
+2. **MO identifies** backup clusters: `spoke-cluster-backup-1`, `spoke-cluster-backup-2`
+3. **MO calls** `scale_cluster` → scales backup clusters to handle load
+4. **MO calls** `deploy_playbook` → deploys playbook to backup clusters
+5. **MO redirects** tasks to backup clusters
+6. **Twins execute** tasks on backup clusters
+7. **MO monitors** → primary cluster recovers
+8. **MO rebalances** → gradually moves tasks back to primary
+
+**Benefits**:
+- **Automatic failover** without human intervention
+- **Zero data loss** via playbook replication
+- **Seamless recovery** when primary returns
+- **MO-driven** resilience
+
+#### Use Case 6: Multi-Tenant AGI with Cluster Isolation
+
+**Scenario**: Deploy isolated PAGI twins for different organizations (Company A, Company B) on separate clusters.
+
+**Flow**:
+1. **MO (GENERAL)** receives request: "Deploy Company A's twins on dedicated cluster"
+2. **MO creates** new spoke cluster: `company-a-cluster`
+3. **MO calls** `deploy_playbook` → deploys Company A's custom playbook
+4. **MO configures** cluster with Company A's security policies
+5. **MO repeats** for Company B: `company-b-cluster`
+6. **MO isolates** clusters → no cross-tenant data access
+7. **MO monitors** each tenant independently
+8. **MO generates** tenant-specific improvements
+
+**Benefits**:
+- **Complete isolation** between tenants
+- **Custom playbooks** per tenant
+- **Centralized management** via single MO
+- **Scalable** to many tenants
+
+### Integration with MO Meta-Learning
+
+The OCM plugin enables the MO to **orchestrate meta-learning at scale**:
+
+1. **MO analyzes** swarm-wide patterns from all clusters
+2. **MO generates** refinement artifacts based on collective experience
+3. **MO deploys** improvements to selected clusters for testing
+4. **MO validates** improvements across clusters
+5. **MO merges** validated improvements into global playbook
+6. **MO deploys** global playbook to all clusters
+
+This creates a **feedback loop** where:
+- **Individual twins** learn from tasks
+- **Clusters** aggregate twin experiences
+- **MO** learns from all clusters
+- **MO** improves the entire swarm
+
+### Security Considerations
+
+#### Cluster Access Control
+
+- **RBAC**: OCM uses Kubernetes RBAC for cluster access
+- **Service Accounts**: OCM plugin uses service accounts with minimal permissions
+- **Network Policies**: Isolate hub and spoke clusters via network policies
+
+#### Playbook Validation
+
+- **Signature Verification**: MO verifies playbook signatures before deployment
+- **Ethics Checks**: MO validates playbooks against ethics policies
+- **Sandbox Testing**: MO tests playbooks in isolated clusters before rollout
+
+#### DID Integration
+
+- **Twin Identity**: Each twin has a DID for authentication
+- **Cluster Identity**: Clusters can have DIDs for secure communication
+- **Verifiable Credentials**: MO issues VCs for cluster trust relationships
+
+### Configuration Reference
+
+#### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `EXTERNAL_GATEWAY_URL` | External Gateway URL | `http://127.0.0.1:8010` |
+| `PLUGIN_URL` | OCM plugin URL | `http://127.0.0.1:8095` |
+| `KUBECONFIG` | Path to kubeconfig file | Auto-detected |
+| `IS_MO` | Enable MO as GENERAL | `false` |
+
+#### Kubernetes Resources
+
+The OCM plugin creates the following Kubernetes resources:
+
+- **ManifestWork**: Deployed to spoke clusters via OCM
+- **ConfigMap**: Contains playbook CIDs or scaling parameters
+- **ManagedCluster**: Represents spoke clusters in the hub
+
+### Troubleshooting
+
+#### Plugin Not Registering Tools
+
+**Symptom**: Tools not available in External Gateway
+
+**Solution**:
+```bash
+# Check plugin is running
+curl http://localhost:8095/healthz
+
+# Check External Gateway
+curl http://localhost:8010/tools | grep list_clusters
+
+# Check plugin logs
+journalctl -u pagi-ocm-orchestration-plugin
+```
+
+#### Kubernetes Client Not Available
+
+**Symptom**: Plugin logs show "kubernetes client not available"
+
+**Solution**:
+```bash
+# Option 1: Set KUBECONFIG
+export KUBECONFIG=/path/to/kubeconfig
+
+# Option 2: Use in-cluster config (if running in Kubernetes)
+# Ensure service account has permissions:
+kubectl create clusterrolebinding ocm-plugin-binding \
+  --clusterrole=cluster-admin \
+  --serviceaccount=default:ocm-plugin
+```
+
+#### ManifestWork Not Syncing
+
+**Symptom**: Playbooks not appearing on spoke clusters
+
+**Solution**:
+```bash
+# Check ManifestWork status on hub
+kubectl get manifestwork -A
+
+# Check OCM agent on spoke
+kubectl get pods -n open-cluster-management-agent
+
+# Check spoke cluster registration
+kubectl get managedclusters
+```
+
+### Future Enhancements
+
+- **Auto-Discovery**: Automatically discover and register new spoke clusters
+- **Health Monitoring**: Real-time cluster health and twin performance metrics
+- **Cost Optimization**: Automatic cluster scaling based on cost constraints
+- **Multi-Cloud**: Support for clusters across AWS, GCP, Azure
+- **Edge Deployment**: Deploy twins to edge devices via lightweight OCM agents
 
 ---
 
