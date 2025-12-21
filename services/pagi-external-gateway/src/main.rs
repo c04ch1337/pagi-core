@@ -11,20 +11,50 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use pagi_common::TwinId;
+use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
+use pagi_common::{ErrorCode, PagiError, TwinId};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     collections::HashMap,
     net::SocketAddr,
     path::{Path as StdPath, PathBuf},
+    sync::OnceLock,
     sync::Arc,
+    time::Instant,
 };
 use tokio::sync::RwLock;
 use tracing::info;
 use uuid::Uuid;
 
 use redis_registry::{load_all_tools, persist_tool};
+
+#[derive(Debug, Serialize)]
+struct ErrorBody {
+    error: String,
+    code: u32,
+}
+
+static METRICS: OnceLock<PrometheusHandle> = OnceLock::new();
+
+fn init_metrics() {
+    let handle = PrometheusBuilder::new()
+        .install_recorder()
+        .expect("failed to install Prometheus recorder");
+    let _ = METRICS.set(handle);
+}
+
+async fn metrics_handler() -> impl IntoResponse {
+    let Some(h) = METRICS.get() else {
+        return (StatusCode::SERVICE_UNAVAILABLE, "metrics recorder not initialized").into_response();
+    };
+    (StatusCode::OK, h.render()).into_response()
+}
+
+fn err_json(status: StatusCode, err: PagiError) -> impl IntoResponse {
+    let code = err.code() as u32;
+    (status, Json(ErrorBody { error: err.to_string(), code }))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolSchema {
@@ -72,6 +102,7 @@ pub(crate) async fn upsert_tool(
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     pagi_http::tracing::init("pagi-external-gateway");
+    init_metrics();
 
     let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://127.0.0.1:6379".to_string());
     let redis_client = redis::Client::open(redis_url.clone())?;
@@ -103,6 +134,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/health", get(|| async { "OK" }))
         .route("/healthz", get(|| async { "OK" }))
+        .route("/metrics", get(metrics_handler))
         .route("/register_tool", post(register_tool))
         .route("/tools", get(list_all_tools))
         .route("/tools/:twin_id", get(list_tools_for_twin))
@@ -134,11 +166,14 @@ async fn register_tool(
             info!(tool_name = %tool.name, twin_id = ?twin_id, "Registered tool");
             StatusCode::OK.into_response()
         }
-        Err(err) => (
+        Err(source) => err_json(
             StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to register tool: {err}"),
+            PagiError::Redis {
+                code: ErrorCode::RedisError,
+                source,
+            },
         )
-            .into_response(),
+        .into_response(),
     }
 }
 
@@ -183,6 +218,8 @@ async fn execute_tool(
     State(state): State<GatewayState>,
     Json(payload): Json<ExecutePayload>,
 ) -> impl IntoResponse {
+    let started = Instant::now();
+
     let twin_uuid = payload.twin_id.0;
     let tool = {
         let reg = state.registry.read().await;
@@ -193,22 +230,56 @@ async fn execute_tool(
     };
 
     let Some(tool) = tool else {
-        return (StatusCode::NOT_FOUND, format!("Tool '{tool_name}' not found")).into_response();
+        metrics::counter!(
+            "pagi_tool_executions_total",
+            "tool" => tool_name.clone(),
+            "status" => "not_found"
+        )
+        .increment(1);
+        return err_json(
+            StatusCode::NOT_FOUND,
+            PagiError::plugin_exec(format!("tool '{tool_name}' not found")),
+        )
+        .into_response();
     };
 
     // Shared library execution path
     if let Some(lib_path) = tool.plugin_url.strip_prefix("sharedlib://") {
         return match shared_lib::execute_tool(StdPath::new(lib_path), &tool.endpoint, &payload.parameters) {
-            Ok(result) => (StatusCode::OK, result).into_response(),
-            Err(err) => (StatusCode::BAD_GATEWAY, err).into_response(),
+            Ok(result) => {
+                metrics::counter!("pagi_tool_executions_total", "tool" => tool_name.clone(), "status" => "success")
+                    .increment(1);
+                metrics::histogram!("pagi_tool_execution_duration_seconds", "tool" => tool_name.clone())
+                    .record(started.elapsed().as_secs_f64());
+                (StatusCode::OK, result).into_response()
+            }
+            Err(err) => {
+                metrics::counter!("pagi_tool_executions_total", "tool" => tool_name.clone(), "status" => "error")
+                    .increment(1);
+                metrics::histogram!("pagi_tool_execution_duration_seconds", "tool" => tool_name.clone())
+                    .record(started.elapsed().as_secs_f64());
+                err_json(StatusCode::BAD_GATEWAY, PagiError::plugin_exec(err)).into_response()
+            }
         };
     }
 
     // WebAssembly execution path
     if let Some(wasm_path) = tool.plugin_url.strip_prefix("wasm://") {
         return match wasm_plugin::execute_tool(StdPath::new(wasm_path), &tool.endpoint, &payload.parameters) {
-            Ok(result) => (StatusCode::OK, result).into_response(),
-            Err(err) => (StatusCode::BAD_GATEWAY, err).into_response(),
+            Ok(result) => {
+                metrics::counter!("pagi_tool_executions_total", "tool" => tool_name.clone(), "status" => "success")
+                    .increment(1);
+                metrics::histogram!("pagi_tool_execution_duration_seconds", "tool" => tool_name.clone())
+                    .record(started.elapsed().as_secs_f64());
+                (StatusCode::OK, result).into_response()
+            }
+            Err(err) => {
+                metrics::counter!("pagi_tool_executions_total", "tool" => tool_name.clone(), "status" => "error")
+                    .increment(1);
+                metrics::histogram!("pagi_tool_execution_duration_seconds", "tool" => tool_name.clone())
+                    .record(started.elapsed().as_secs_f64());
+                err_json(StatusCode::BAD_GATEWAY, PagiError::plugin_exec(err)).into_response()
+            }
         };
     }
 
@@ -219,8 +290,20 @@ async fn execute_tool(
         .or_else(|| tool.plugin_url.strip_prefix("component://"))
     {
         return match wasm_component_plugin::execute_tool(StdPath::new(component_path), &tool.endpoint, &payload.parameters) {
-            Ok(result) => (StatusCode::OK, result).into_response(),
-            Err(err) => (StatusCode::BAD_GATEWAY, err).into_response(),
+            Ok(result) => {
+                metrics::counter!("pagi_tool_executions_total", "tool" => tool_name.clone(), "status" => "success")
+                    .increment(1);
+                metrics::histogram!("pagi_tool_execution_duration_seconds", "tool" => tool_name.clone())
+                    .record(started.elapsed().as_secs_f64());
+                (StatusCode::OK, result).into_response()
+            }
+            Err(err) => {
+                metrics::counter!("pagi_tool_executions_total", "tool" => tool_name.clone(), "status" => "error")
+                    .increment(1);
+                metrics::histogram!("pagi_tool_execution_duration_seconds", "tool" => tool_name.clone())
+                    .record(started.elapsed().as_secs_f64());
+                err_json(StatusCode::BAD_GATEWAY, PagiError::plugin_exec(err)).into_response()
+            }
         };
     }
 
@@ -234,18 +317,47 @@ async fn execute_tool(
             match resp.text().await {
                 Ok(text) => {
                     if status.is_success() {
+                        metrics::counter!("pagi_tool_executions_total", "tool" => tool_name.clone(), "status" => "success")
+                            .increment(1);
+                        metrics::histogram!("pagi_tool_execution_duration_seconds", "tool" => tool_name.clone())
+                            .record(started.elapsed().as_secs_f64());
                         (StatusCode::OK, text).into_response()
                     } else {
-                        (status, format!("Plugin returned {status}: {text}")).into_response()
+                        metrics::counter!("pagi_tool_executions_total", "tool" => tool_name.clone(), "status" => "error")
+                            .increment(1);
+                        metrics::histogram!("pagi_tool_execution_duration_seconds", "tool" => tool_name.clone())
+                            .record(started.elapsed().as_secs_f64());
+                        err_json(
+                            status,
+                            PagiError::plugin_exec(format!("plugin returned {status}: {text}")),
+                        )
+                        .into_response()
                     }
                 }
-                Err(_) => (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "Failed to read plugin response".to_string(),
-                )
-                    .into_response(),
+                Err(read_err) => {
+                    metrics::counter!("pagi_tool_executions_total", "tool" => tool_name.clone(), "status" => "error")
+                        .increment(1);
+                    metrics::histogram!("pagi_tool_execution_duration_seconds", "tool" => tool_name.clone())
+                        .record(started.elapsed().as_secs_f64());
+                    err_json(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        PagiError::plugin_exec(format!("failed to read plugin response: {read_err}")),
+                    )
+                    .into_response()
+                }
             }
         }
-        Err(e) => (StatusCode::BAD_GATEWAY, format!("Failed to reach plugin: {e}")).into_response(),
+        Err(e) => {
+            let code = if e.is_timeout() {
+                ErrorCode::NetworkTimeout
+            } else {
+                ErrorCode::Unknown
+            };
+            metrics::counter!("pagi_tool_executions_total", "tool" => tool_name.clone(), "status" => "error")
+                .increment(1);
+            metrics::histogram!("pagi_tool_execution_duration_seconds", "tool" => tool_name.clone())
+                .record(started.elapsed().as_secs_f64());
+            err_json(StatusCode::BAD_GATEWAY, PagiError::Network { code, source: e }).into_response()
+        }
     }
 }

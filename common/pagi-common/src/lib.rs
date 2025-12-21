@@ -10,39 +10,122 @@ pub use types::{TwinId, TwinState};
 ///
 /// Keep this intentionally lightweight to avoid pulling plugin-specific deps
 /// (e.g. git2) into the core crates.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[repr(u32)]
+pub enum ErrorCode {
+    ConfigInvalid = 1001,
+    RedisError = 2002,
+    PluginLoadFailed = 4001,
+    PluginExecutionFailed = 4002,
+    NetworkTimeout = 7001,
+    Unknown = 9999,
+}
+
+#[derive(thiserror::Error, Debug)]
 pub enum PagiError {
-    #[error("{0}")]
-    Message(String),
+    #[error("Configuration error ({code:?}): {message}")]
+    Config { code: ErrorCode, message: String },
+
+    #[error("Redis error ({code:?}): {source}")]
+    Redis { code: ErrorCode, source: redis::RedisError },
+
+    #[error("Plugin error ({code:?}): {message}")]
+    Plugin { code: ErrorCode, message: String },
+
+    #[error("Network error ({code:?}): {source}")]
+    Network { code: ErrorCode, source: reqwest::Error },
+
+    #[error("IO error ({code:?}): {source}")]
+    Io { code: ErrorCode, source: std::io::Error },
+
+    #[error("Serialization error ({code:?}): {source}")]
+    Serialization { code: ErrorCode, source: serde_json::Error },
+
+    #[error("TOML error ({code:?}): {message}")]
+    Toml { code: ErrorCode, message: String },
+
+    #[error("Unknown error: {0}")]
+    Unknown(String),
+}
+
+impl PagiError {
+    pub fn code(&self) -> ErrorCode {
+        match self {
+            PagiError::Config { code, .. } => *code,
+            PagiError::Redis { code, .. } => *code,
+            PagiError::Plugin { code, .. } => *code,
+            PagiError::Network { code, .. } => *code,
+            PagiError::Io { code, .. } => *code,
+            PagiError::Serialization { code, .. } => *code,
+            PagiError::Toml { code, .. } => *code,
+            PagiError::Unknown(_) => ErrorCode::Unknown,
+        }
+    }
+
+    pub fn config(msg: impl Into<String>) -> Self {
+        Self::Config {
+            code: ErrorCode::ConfigInvalid,
+            message: msg.into(),
+        }
+    }
+
+    pub fn plugin_load(msg: impl Into<String>) -> Self {
+        Self::Plugin {
+            code: ErrorCode::PluginLoadFailed,
+            message: msg.into(),
+        }
+    }
+
+    pub fn plugin_exec(msg: impl Into<String>) -> Self {
+        Self::Plugin {
+            code: ErrorCode::PluginExecutionFailed,
+            message: msg.into(),
+        }
+    }
 }
 
 impl From<std::io::Error> for PagiError {
     fn from(value: std::io::Error) -> Self {
-        Self::Message(value.to_string())
+        Self::Io {
+            code: ErrorCode::Unknown,
+            source: value,
+        }
     }
 }
 
 impl From<reqwest::Error> for PagiError {
     fn from(value: reqwest::Error) -> Self {
-        Self::Message(value.to_string())
+        Self::Network {
+            code: ErrorCode::Unknown,
+            source: value,
+        }
     }
 }
 
 impl From<serde_json::Error> for PagiError {
     fn from(value: serde_json::Error) -> Self {
-        Self::Message(value.to_string())
+        Self::Serialization {
+            code: ErrorCode::Unknown,
+            source: value,
+        }
     }
 }
 
 impl From<toml::ser::Error> for PagiError {
     fn from(value: toml::ser::Error) -> Self {
-        Self::Message(value.to_string())
+        Self::Toml {
+            code: ErrorCode::ConfigInvalid,
+            message: value.to_string(),
+        }
     }
 }
 
 impl From<toml::de::Error> for PagiError {
     fn from(value: toml::de::Error) -> Self {
-        Self::Message(value.to_string())
+        Self::Toml {
+            code: ErrorCode::ConfigInvalid,
+            message: value.to_string(),
+        }
     }
 }
 

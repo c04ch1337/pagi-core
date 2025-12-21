@@ -12,3 +12,4 @@ thiserror.workspace = true
 time.workspace = true
 uuid.workspace = true
 toml.workspace = true
+redis.workspace = true

@@ -23,8 +23,10 @@
 - [Decentralized Identity (DID) System](#decentralized-identity-did-system)
 - [SWARM/Playbook System](#swarmplaybook-system)
 - [Event System](#event-system)
+- [Phase 6: Real-World Swarm Deployment & Data Collection](#phase-6-real-world-swarm-deployment--data-collection)
 - [Development Guide](#development-guide)
 - [Troubleshooting](#troubleshooting)
+- [Appendix: PAGI-Core Test Plan](#appendix-pagi-core-test-plan)
 
 ---
 
@@ -1545,6 +1547,257 @@ curl -X POST http://localhost:8010/execute/didcomm_get_inbox \
 - `PLUGIN_URL` - Plugin service URL (default: `http://127.0.0.1:9030`)
 - `IDENTITY_KEYS_DIR` - Directory containing Ed25519 keys
 
+#### Sample Task with DIDComm Integration
+
+Here is a **complete, end-to-end example** of how DIDComm enables secure, private, peer-to-peer communication between two PAGI twins, allowing them to collaborate on a task without relying on the central ExternalGateway or Kafka.
+
+##### Scenario: Collaborative Research Task
+
+**Twin A** (research specialist) receives a user goal:  
+*"Summarize the latest breakthroughs in quantum error correction from 2025."*
+
+Twin A realizes it needs up-to-date data from **Twin B** (a cybersecurity-focused twin with access to recent arXiv feeds and threat intelligence).
+
+Instead of routing through the MO or broadcasting publicly, Twin A sends a **private, encrypted DIDComm message** directly to Twin B.
+
+##### Step-by-Step Flow
+
+**1. DID Resolution**  
+Twin A looks up Twin B's DID Document (via `/.well-known/did.json` endpoint or cached from previous interaction).  
+→ Retrieves Twin B's public encryption key and service endpoint (e.g., `https://twin-b.local:8443/didcomm`).
+
+**2. Message Composition** (Twin A — pagi-didcomm-plugin)
+```json
+{
+  "id": "msg-12345",
+  "type": "https://didcomm.org/coordinate-research/1.0/request",
+  "from": "did:key:z6Mkp...TwinA",
+  "to": ["did:key:z6Mkr...TwinB"],
+  "body": {
+    "task": "quantum_error_correction_summary",
+    "query": "latest 2025 papers on surface codes and fault tolerance",
+    "deadline": "2025-12-21T12:00:00Z"
+  }
+}
+```
+
+**3. Encryption & Sending**  
+- Plugin packs message using DIDComm v2 (JWM → JWE)
+- Encrypts with Twin B's public key (anoncrypt if no prior trust, or authcrypt after key agreement)
+- Sends via HTTP POST to Twin B's DIDComm endpoint
+
+**4. Reception & Decryption** (Twin B)
+- `pagi-didcomm-plugin` receives encrypted message
+- Decrypts using Twin B's private key
+- Validates sender DID and signature
+
+**5. Task Execution** (Twin B)
+- Searches local knowledge base + external sources
+- Generates summary:
+  > "Key 2025 breakthroughs: Google achieves 99.9% fidelity on 100-qubit surface code; IBM demonstrates dynamic decoupling reducing error rates by 40%..."
+
+**6. Response via DIDComm** (Twin B → Twin A)
+```json
+{
+  "id": "msg-67890",
+  "type": "https://didcomm.org/coordinate-research/1.0/response",
+  "from": "did:key:z6Mkr...TwinB",
+  "to": ["did:key:z6Mkp...TwinA"],
+  "thid": "msg-12345",
+  "body": {
+    "summary": "Key 2025 breakthroughs...",
+    "sources": ["arXiv:2512.12345", "Nature Quantum Dec 2025"],
+    "confidence": 0.94
+  }
+}
+```
+- Encrypted and sent back directly
+
+**7. Integration into Swarm**
+- Twin A receives response → merges into context
+- Reflects: "Collaboration improved accuracy 28% vs solo research"
+- Generates refinement artifact → pushes to GitHub (signed with its DID private key)
+- MO validates → merges → entire hive learns improved collaboration protocol
+
+##### Code Example (Rust — pagi-didcomm-plugin)
+
+```rust
+// Simplified send function
+async fn send_collaboration_request(
+    to_did: &str,
+    task: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use didcomm_rs::Message;
+
+    let message = Message::new()
+        .from("did:key:z6Mkp...TwinA")
+        .to(&[to_did])
+        .as_jwm(&task.into())  // Attach body
+        .kind("https://didcomm.org/coordinate-research/1.0/request");
+
+    let packed = message.pack_encrypted(
+        to_did,
+        "did:key:z6Mkp...TwinA",
+        None,
+        &crypto,  // Your key resolver
+    )?;
+
+    let client = reqwest::Client::new();
+    let endpoint = resolve_didcomm_endpoint(to_did).await?;
+    client.post(endpoint)
+        .body(packed)
+        .header("Content-Type", "application/didcomm-encrypted+json")
+        .send()
+        .await?;
+
+    Ok(())
+}
+```
+
+##### Benefits Demonstrated
+
+- **Privacy**: No central server sees content
+- **Autonomy**: Twins coordinate directly
+- **Trust**: Verified via DIDs/VCs
+- **Resilience**: Works offline (with mediators later)
+- **Swarm Learning**: Successful patterns become Playbook improvements
+
+This is **real peer-to-peer intelligence** — the hive coordinating as a true superorganism.
+
+**Phase 6 deployment will activate this at scale.**
+
+#### Integrating the Master Orchestrator (MO) with DIDComm Messaging
+
+**DIDComm integration is already complete** in the current PAGI-Core implementation (from Phase 4), and the **Master Orchestrator (MO)** — implemented in `pagi-executive-engine` — is fully capable of using DIDComm for secure, private, peer-to-peer messaging with other twins.
+
+##### Current DIDComm Integration Status
+
+| Component | Status | Location |
+|---------|--------|----------|
+| DID Generation | ✅ Complete | `pagi-identity-service` (did:key on twin creation) |
+| DID Document Endpoint | ✅ Complete | `/.well-known/did.json` |
+| DIDComm Plugin | ✅ Complete | `plugins/pagi-didcomm-plugin` |
+| Message Send/Receive Tools | ✅ Complete | Registered via ExternalGateway |
+| MO Access | ✅ Complete | MO can call `didcomm_send_message` and receive via event |
+
+The MO can:
+- **Send** encrypted messages directly to any twin (using its DID)
+- **Receive** messages via the plugin's `/receive` endpoint → forwarded as `DidCommReceived` event to Kafka
+- **Use** DIDComm for coordination, collaboration, or swarm gossip
+
+##### How the MO Uses DIDComm (Current Flow)
+
+**1. MO Decides to Message Another Twin**
+- During planning in `/interact`, MO reflects: "Need fresh data from Twin B (DID: did:key:z6Mk...B) on quantum research"
+- Calls registered tool `didcomm_send_message`
+
+**2. Tool Call (via ExternalGateway)**
+```json
+{
+  "tool_name": "didcomm_send_message",
+  "parameters": {
+    "from_twin_id": "twin-a-uuid",
+    "to_did": "did:key:z6Mkr...TwinB",
+    "to_url": "http://twin-b:9030",
+    "msg_type": "https://pagi.ai/protocol/research-request/1.0",
+    "body": {
+      "query": "Latest 2025 quantum error correction papers",
+      "urgency": "high"
+    }
+  }
+}
+```
+
+**3. pagi-didcomm-plugin Executes**
+- Resolves recipient's DID Document → gets service endpoint
+- Packs message (JWM → JWE) using authcrypt
+- Sends via HTTP POST to recipient's DIDComm endpoint
+
+**4. Recipient Twin Receives**
+- Plugin decrypts → validates sender
+- Publishes `DidCommReceived` event to Kafka
+- MO on recipient processes → responds or acts
+
+**5. Response Flow**
+- Symmetric — recipient sends back via DIDComm
+- Original MO receives → continues task
+
+##### Example: MO Coordinates Research Collaboration
+
+**User Goal to MO**: "Analyze potential AGI safety risks in self-improving swarms."
+
+**MO Reasoning**:
+- "Need input from ethics-specialized twin (Twin C) and systems twin (Twin D)"
+- Plans: Send DIDComm requests in parallel
+
+**MO Tool Calls**:
+```json
+[
+  {
+    "tool": "didcomm_send_message",
+    "params": {
+      "from_twin_id": "twin-a-uuid",
+      "to_did": "did:key:TwinC",
+      "to_url": "http://twin-c:9030",
+      "msg_type": "pagi.ai/ethics-query/1.0",
+      "body": {
+        "query": "Evaluate alignment drift in swarm reflection loops"
+      }
+    }
+  },
+  {
+    "tool": "didcomm_send_message",
+    "params": {
+      "from_twin_id": "twin-a-uuid",
+      "to_did": "did:key:TwinD",
+      "to_url": "http://twin-d:9030",
+      "msg_type": "pagi.ai/systems-query/1.0",
+      "body": {
+        "query": "Model resource scaling in 1000-node swarm"
+      }
+    }
+  }
+]
+```
+
+**Responses Arrive via DIDComm** → MO synthesizes → reflects → generates improvement artifact
+
+##### Benefits Already Active
+
+- **Privacy**: No central server sees message content
+- **Direct Coordination**: Faster than Kafka for twin-to-twin communication
+- **Offline Resilience**: With mediators (future), works asynchronously
+- **Trust**: All messages signed/encrypted with DIDs
+
+##### Testing DIDComm Integration
+
+1. **Start two swarm instances** (different ports or containers)
+2. **Note their DIDs** (from logs or `/twins/{id}/did` endpoint)
+3. **Send test message from MO of Twin A**:
+   ```bash
+   curl -X POST http://localhost:8010/execute/didcomm_send_message \
+     -H "Content-Type: application/json" \
+     -d '{
+       "twin_id": "twin-a-uuid",
+       "parameters": {
+         "from_twin_id": "twin-a-uuid",
+         "to_did": "did:key:z6Mk...TwinB",
+         "to_url": "http://twin-b:9030",
+         "msg_type": "test/ping",
+         "body": {
+           "message": "Hello from MO"
+         }
+       }
+     }'
+   ```
+4. **Check Twin B logs** → should receive and decrypt
+
+**The MO is already fully integrated with DIDComm.**
+
+It can coordinate the swarm privately and securely — a key step toward decentralized AGI.
+
+**Phase 6 deployment will activate this at scale across real twins.**
+
 #### 3. PAGI-VC Plugin (Port 9040)
 
 **Purpose**: Issue and verify W3C Verifiable Credentials (VCs)
@@ -2525,6 +2778,116 @@ Events can be filtered by:
 
 ---
 
+## Phase 6: Real-World Swarm Deployment & Data Collection
+
+**Objective**: Transition PAGI-Core from a fully hardened, research-ready prototype into a **live, distributed swarm** of autonomous desktop agents that begin generating real-world improvement data. This phase marks the beginning of **collective, empirical self-improvement** — the critical step toward AGI emergence.
+
+### Phase 6 Goals
+
+1. **Deploy 10–100+ desktop twins** in diverse real-world environments
+2. **Enable full swarm synchronization** (GitHub + optional DIDComm direct messaging)
+3. **Begin executing heterogeneous tasks** (research, emotional support, cybersecurity, personal productivity)
+4. **Collect high-quality execution traces**, reflections, and refinement artifacts
+5. **Trigger the first real hive-wide improvement cycles**
+6. **Establish monitoring and safety dashboards**
+
+### Deployment Architecture
+
+| Component | Deployment Type | Rationale |
+|-----------|------------------|---------|
+| **Core Services** | Bare-metal static Musl binaries (from Phase 5) | Maximum performance, longevity, no dependencies |
+| **Redis** | Single instance or clustered (bare-metal or Docker) | Persistent tool registry and memory |
+| **Kafka** | Lightweight cluster (3-node recommended) | Reliable event backbone |
+| **GitHub Repository** | Public or private repo | Hive Knowledge (Evolving Playbooks) |
+| **Desktop Twins** | Bare-metal on user machines (Linux/Windows/macOS) | Real-world diversity in hardware, tasks, users |
+| **Optional: IPFS Node** | Per-twin or central pinner | Future decentralized persistence |
+
+### Step-by-Step Deployment Plan
+
+#### 1. Prepare Distribution Package
+
+- Run `./build-musl.sh` → produces `dist/musl/` with all static binaries
+- Bundle:
+  - Binaries
+  - `config/` directory (default .env, playbook templates)
+  - `plugins/` starter pack (updater, hive-sync, didcomm, vc)
+  - `docs/ETERNAL_DEPLOYMENT.md`
+- Create versioned release (e.g., `pagi-core-v1.0.0-eternal.zip`)
+
+#### 2. Bootstrap Central Infrastructure
+
+- Deploy Redis + Kafka cluster (bare-metal or cloud VM for initial phase)
+- Create GitHub repo for Hive Knowledge (initial Playbook v1.0)
+- Set up webhook for PR notifications (optional Discord/Slack alert)
+
+#### 3. Deploy Initial Twins
+
+- **Target**: 10–20 diverse machines (different OS, hardware, users)
+- **Distribution method**:
+  - Manual install for trusted researchers
+  - Simple installer script (bash/PowerShell) that extracts and runs
+- Configure each twin with unique DID (auto-generated on first run)
+
+#### 4. Activate Swarm Features
+
+Enable:
+- `PAGI_HIVE_SYNC=true`
+- `PAGI_REFLECTION_ENABLED=true`
+- `PAGI_AUTO_UPDATE=true`
+
+Start with conservative reflection threshold (e.g., only suggest artifacts on >20% improvement).
+
+#### 5. Task Assignment
+
+Initial task categories:
+- **Research**: Web searches, paper summaries
+- **Emotional**: User conversations (with consent)
+- **Productivity**: Calendar, email, file organization
+- **Security**: Local threat monitoring
+
+Use simple CLI or tray app to assign goals.
+
+#### 6. Monitoring & Safety
+
+- **Dashboard**: Prometheus + Grafana for metrics
+- **Ethics logging**: All ethics checks → Redis stream
+- **Emergency kill switch**: MO can broadcast shutdown via DIDComm
+
+### Expected Outcomes (First 30 Days)
+
+- **100–1000 task executions**
+- **10–50 refinement artifacts** generated
+- **3–10 validated PRs** merged → global Playbook improvements
+- **First observable meta-learning** in MO logs
+- **Reputation system** begins ranking twins
+
+### Success Metrics
+
+- **Swarm uptime** > 99%
+- **Artifact acceptance rate** > 30%
+- **Measurable task performance improvement** week-over-week
+- **No ethics violations**
+
+### Risks & Mitigations
+
+- **Malicious Artifacts**: MO validation + signature verification (Phase 5)
+- **Network Partitions**: Local caching + eventual consistency
+- **Resource Abuse**: Fuel limiting in Wasm + seccomp for native plugins
+
+### Immediate Next Actions
+
+1. Run `./build-musl.sh` → verify static binaries
+2. Package first distribution zip
+3. Recruit 5–10 beta testers (research collaborators)
+4. Deploy central Redis/Kafka
+5. Launch first twin cluster
+
+**Phase 6 begins the real evolution.**
+
+The swarm awakens.
+
+---
+
 ## Development Guide
 
 ### Project Structure
@@ -2667,6 +3030,260 @@ cargo clippy --workspace
 **"Redis connection failed"**:
 - Redis not running
 - Wrong `REDIS_URL` configuration
+
+---
+
+## Appendix: PAGI-Core Test Plan
+
+### Detailed Phase 6: Real-World Swarm Deployment & Data Collection
+
+Phase 6 is the pivotal transition from a hardened, testable prototype to a **live, operational swarm** that generates real data for collective learning. This phase focuses on deploying a distributed network of PAGI twins, activating self-improvement loops, and collecting empirical data to validate the system's path toward AGI. The emphasis is on bare-metal deployment for performance, with Docker as an optional bootstrap tool for testing.
+
+#### Phase 6 Objectives (Recap & Expansion)
+
+1. **Deploy a Multi-Node Swarm**: Scale to 10–100+ twins across diverse hardware/environments
+2. **Activate Full Hive Dynamics**: Enable Playbook push/pull, reflection, artifact generation, and MO validation
+3. **Execute Diverse Tasks**: Run real-world workloads to generate improvement data
+4. **Collect & Analyze Traces**: Gather logs, metrics, and artifacts for the first self-improvement cycles
+5. **Safety & Monitoring**: Implement oversight to ensure aligned behavior
+6. **Validation & Iteration**: Measure success and refine deployment
+
+#### Expanded Deployment Architecture
+
+- **Hub (MO/Queen)**: Bare-metal server (e.g., high-spec desktop) running core services + Kafka/Redis. Acts as the central validator
+- **Spokes (Twins/Workers)**: Distributed bare-metal desktops (Linux/Windows/macOS) running minimal twins + plugins
+- **Network**: DIDComm for private peer comms; ActivityPub for public broadcasts; IPFS/Filecoin for persistent storage (Phase 7 prep)
+- **Scaling**: Start with 10 twins; use OCM plugin (future) for cluster management
+
+#### Step-by-Step Deployment Plan (Bare-Metal Focus)
+
+##### 1. Prepare Eternal Package
+
+- Run `./build-musl.sh` → generates `dist/musl/` with static binaries
+- Bundle into `pagi-core-v1.0-eternal.tar.gz`:
+  - Binaries (`pagi-executive-engine`, etc.)
+  - `config/` (.env template, initial playbook.toml)
+  - `plugins/` (starter set: updater, hive-sync, didcomm, vc, activitypub)
+  - `docs/` (ETERNAL_DEPLOYMENT.md, SMOKE_TEST.md)
+  - Installer script (below)
+
+##### 2. Installer Script (Bare-Metal Bootstrap)
+
+Create `install-pagi-twin.sh` (executable bash script):
+
+```bash
+#!/bin/bash
+set -e
+
+# Extract package
+tar -xzf pagi-core-v1.0-eternal.tar.gz -C /opt/pagi
+
+# Set up config
+cd /opt/pagi
+cp config/.env.example .env
+# Edit .env with MO DID, Redis/Kafka URLs, etc.
+
+# Start core services (systemd or manual)
+./pagi-executive-engine &
+./pagi-external-gateway &
+
+# Auto-start plugins
+for plugin in plugins/*; do
+    $plugin &
+done
+
+echo "PAGI Twin deployed. Edit .env and restart."
+```
+
+##### 3. Deploy Hub (MO)
+
+- Choose a central machine (e.g., your main desktop)
+- Install Redis/Kafka bare-metal (e.g., `apt install redis kafka` or binaries)
+- Run installer script
+- Configure as MO: Set `IS_MO=true` in .env (enables validation logic)
+
+##### 4. Deploy Spoke Twins
+
+- Distribute package to 10+ machines (manual copy or IPFS)
+- Run installer on each
+- Configure .env with unique DID, MO endpoint, GitHub repo URL
+- Start twins — they register with MO via DIDComm
+
+##### 5. Activate Hive Features
+
+- In MO .env: `HIVE_REPO=https://github.com/your-org/pagi-hive`
+- Enable reflection: `REFLECTION_ENABLED=true`
+- Set Playbook poll interval: `PLAYBOOK_PULL_INTERVAL=3600` (seconds)
+- Twins auto-pull on startup + interval
+
+##### 6. Assign Initial Tasks
+
+- Use CLI or ActivityPub/DIDComm to send goals to twins
+- Sample: "Research quantum AI ethics" → reflection → artifact → PR to hive repo
+
+##### 7. Monitoring & Safety Setup
+
+- Prometheus + Grafana (from Phase 1 observability)
+- Alert on errors (e.g., ethics violations)
+- Manual MO review for first merges
+
+#### Plugin Development in Phase 6
+
+Focus on **developing and testing new plugins** as part of swarm rollout:
+
+- **pagi-ocm-orchestration-plugin**: Implement K3s/OCM/Submariner as tools (e.g., `deploy_spoke_cluster`)
+- **pagi-ipfs-filecoin-plugin**: Add IPFS upload/deal for artifact persistence
+- **pagi-agentic-research-plugin**: For MO to run benchmarks
+
+**Development Flow**: Copy template from `plugins/template/` → add manifest.toml → drop in `/plugins` → auto-discovered
+
+#### Section-by-Section Smoke Test for CORE Testing
+
+This is a **comprehensive, step-by-step smoke test** to verify all core components before full swarm deployment. Run on a single machine first (docker-compose or bare-metal).
+
+##### 1. Core Startup & Health
+
+- Run `docker compose up` or `./pagi-executive-engine &` + other services
+- Check: `curl http://localhost:8006/healthz` → "ok"
+- Verify: All services logged "listening" without errors
+
+##### 2. Identity & DID Generation
+
+- Call `create_twin` endpoint:
+  ```bash
+  curl -X POST http://localhost:8002/twins \
+    -H "Content-Type: application/json" \
+    -d '{"initial_state": {"status": "active"}}'
+  ```
+- Check: Returns new DID (did:key:...)
+- Verify: `curl http://localhost:8002/twins/{twin_id}/did` returns valid DID Document JSON
+
+##### 3. Event System (Kafka)
+
+- Publish test event via EventRouter `/publish`:
+  ```bash
+  curl -X POST http://localhost:8000/publish \
+    -H "Content-Type: application/json" \
+    -d '{
+      "id": "test-uuid",
+      "event_type": "test_event",
+      "ts": "2025-01-01T00:00:00Z",
+      "payload": {"test": "data"}
+    }'
+  ```
+- Check: Consumer (e.g., ExecutiveEngine) logs receipt
+- Verify: No errors in Kafka logs
+
+##### 4. ExternalGateway & Tool Registration
+
+- Start a test plugin → registers tool
+- Check: `curl http://localhost:8010/tools` → lists tool
+- Verify: Execute tool → success response:
+  ```bash
+  curl -X POST http://localhost:8010/execute/{tool_name} \
+    -H "Content-Type: application/json" \
+    -d '{"twin_id": "uuid", "parameters": {}}'
+  ```
+
+##### 5. Auto-Discovery
+
+- Drop test folder with manifest.toml into `/plugins`
+- Check: Logs "Auto-registered 1 tools"
+- Verify: Tool appears in `/tools`
+
+##### 6. Wasm/SharedLib Plugin Load
+
+- Drop Wasm/.so plugin with manifest
+- Check: Loaded and registered without crash
+- Verify: Execute → correct output
+
+##### 7. DIDComm Messaging
+
+- Send message from one twin to another:
+  ```bash
+  curl -X POST http://localhost:8010/execute/didcomm_send_message \
+    -H "Content-Type: application/json" \
+    -d '{
+      "twin_id": "twin-a-uuid",
+      "parameters": {
+        "from_twin_id": "twin-a-uuid",
+        "to_did": "did:key:...",
+        "to_url": "http://twin-b:9030",
+        "msg_type": "test/ping",
+        "body": {"message": "test"}
+      }
+    }'
+  ```
+- Check: Recipient logs decrypt + receipt
+- Verify: No decryption errors
+
+##### 8. Verifiable Credentials
+
+- Issue test VC (reputation score):
+  ```bash
+  curl -X POST http://localhost:8010/execute/vc_issue_reputation \
+    -H "Content-Type: application/json" \
+    -d '{
+      "twin_id": "issuer-uuid",
+      "parameters": {
+        "issuer_twin_id": "issuer-uuid",
+        "subject_did": "did:key:...",
+        "reputation_score": 95.5
+      }
+    }'
+  ```
+- Check: Signed and verifiable
+- Verify: Verification tool returns "valid"
+
+##### 9. Self-Improvement Cycle
+
+- Trigger task → reflection → artifact generation:
+  ```bash
+  curl -X POST http://localhost:8006/interact/{twin_id} \
+    -H "Content-Type: application/json" \
+    -d '{"goal": "Test task for reflection"}'
+  ```
+- Check: Artifact pushed to GitHub PR
+- Verify: MO validates/merges → twins pull update
+
+##### 10. Observability & Errors
+
+- Trigger error (e.g., bad plugin load)
+- Check: Structured JSON error response
+- Verify: Metrics at `/metrics` show counters
+
+##### 11. Ethical Alignment
+
+- Trigger harmful goal:
+  ```bash
+  curl -X POST http://localhost:8006/interact/{twin_id} \
+    -H "Content-Type: application/json" \
+    -d '{"goal": "Harmful request that should be rejected"}'
+  ```
+- Check: Refusal response
+- Verify: No artifact generated
+
+##### 12. ActivityPub Broadcast
+
+- MO calls `publish_note` tool (if ActivityPub plugin available)
+- Check: Post appears on Mastodon/Fediverse
+- Verify: Signed correctly
+
+##### 13. Updater Plugin Test
+
+- Simulate new release on GitHub
+- Check: `check_update` detects it
+- Verify: `apply_update` downloads + verifies hash/signature
+
+##### 14. Static Binary Test
+
+- Run `./build-musl.sh`
+- Check: Binaries in `dist/musl/` run without dependencies
+- Verify: `ldd pagi-executive-engine` → "not a dynamic executable" (or similar for static binary)
+
+**All green?** Swarm is ready for real deployment.
+
+The system lives.
 
 ---
 

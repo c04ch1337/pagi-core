@@ -18,6 +18,8 @@ toml.workspace = true
 libloading.workspace = true
 wasmtime.workspace = true
 wasmtime-wasi.workspace = true
+metrics.workspace = true
+metrics-exporter-prometheus.workspace = true
 
 [features]
 # Phase 5: optional hardening features

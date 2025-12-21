@@ -305,6 +305,16 @@ async fn register_plugin_from_manifest(
     let manifest_str = std::fs::read_to_string(manifest_path)?;
     let manifest: PluginManifest = toml::from_str(&manifest_str)?;
 
+    // Phase 1 observability: count discovered plugins by type.
+    let plugin_type_label = match manifest.plugin.plugin_type {
+        PluginType::Binary => "binary",
+        PluginType::SharedLib => "shared_lib",
+        PluginType::ConfigOnly => "config_only",
+        PluginType::Wasm => "wasm",
+        PluginType::ComponentWasm => "component_wasm",
+    };
+    metrics::counter!("pagi_plugins_discovered_total", "type" => plugin_type_label).increment(1);
+
     info!(
         "Discovered plugin: {} v{} ({:?})",
         manifest.plugin.name, manifest.plugin.version, manifest.plugin.plugin_type
@@ -337,6 +347,12 @@ async fn register_plugin_from_manifest(
 
                 return Ok(registered);
             } else {
+                metrics::counter!(
+                    "pagi_plugin_load_errors_total",
+                    "type" => "shared_lib",
+                    "reason" => "missing_path"
+                )
+                .increment(1);
                 warn!("Shared library path {:?} does not exist; skipping", full_lib);
             }
         }
@@ -367,6 +383,12 @@ async fn register_plugin_from_manifest(
 
                 return Ok(registered);
             } else {
+                metrics::counter!(
+                    "pagi_plugin_load_errors_total",
+                    "type" => "wasm",
+                    "reason" => "missing_path"
+                )
+                .increment(1);
                 warn!("Wasm module path {:?} does not exist; skipping", full_wasm);
             }
         }
@@ -405,6 +427,12 @@ async fn register_plugin_from_manifest(
 
                 return Ok(registered);
             } else {
+                metrics::counter!(
+                    "pagi_plugin_load_errors_total",
+                    "type" => "component_wasm",
+                    "reason" => "missing_path"
+                )
+                .increment(1);
                 warn!("Component wasm path {:?} does not exist; skipping", full_wasm);
             }
         }
@@ -437,6 +465,12 @@ async fn register_plugin_from_manifest(
                 tokio::time::sleep(Duration::from_secs(3)).await;
                 return Ok(0);
             } else {
+                metrics::counter!(
+                    "pagi_plugin_load_errors_total",
+                    "type" => "binary",
+                    "reason" => "missing_path"
+                )
+                .increment(1);
                 warn!("Binary path {:?} does not exist; skipping spawn", full_binary);
             }
         }
