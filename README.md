@@ -1384,9 +1384,11 @@ async fn start_ipfs_swarm() -> Result<Ipfs, Box<dyn std::error::Error>> {
     let peer_id = PeerId::from(keypair.public());
 
     let mut opts = IpfsOptions::default();
-    opts.mdns = true;  // Local discovery
-    opts.kad = true;   // DHT for global discovery
-    opts.pubsub = true; // Enable pubsub
+    opts.mdns = true;               // Local discovery
+    opts.disable_kad = false;       // DHT for global discovery
+    opts.pubsub_config = Some(Default::default()); // Enable pubsub
+    opts.relay = true;              // Enable circuit relay v2 (client)
+    // opts.relay_server = true;    // Optional: become a relay server
 
     // Optional: Add known bootstrap nodes
     opts.bootstrap = vec![
@@ -1522,6 +1524,110 @@ Your command. 🔥
 
 ---
 
+### HTTP Signatures in ActivityPub: A Clear Explanation
+
+**HTTP Signatures** (also known as **Linked Data Signatures** in the ActivityPub/Fediverse context) are a mechanism to cryptographically sign HTTP requests and responses, ensuring:
+
+- **Authenticity**: The message really came from the claimed sender.
+- **Integrity**: The message wasn't tampered with in transit.
+- **Non-repudiation**: The sender can't deny having sent it.
+
+This is **essential** in a decentralized network like the Fediverse (Mastodon, Lemmy, Pixelfed, etc.), where servers need to trust content from unknown remote servers without a central authority.
+
+#### Why HTTP Signatures Are Needed in ActivityPub
+
+ActivityPub is a **federated** protocol: servers (instances) communicate directly with each other to deliver posts, follows, likes, etc. Without signatures:
+
+- Anyone could forge a "Like" from @elonmusk@mastodon.example.
+- Malicious servers could inject fake content into your timeline.
+
+HTTP Signatures solve this by attaching a cryptographic proof to every federated HTTP message.
+
+#### How HTTP Signatures Work (Step-by-Step)
+
+**1. Key Pair Generation**
+- Each actor (user) has a public/private key pair (usually RSA or Ed25519).
+- The **public key** is published in the actor's JSON-LD profile (e.g., `https://server.example/users/alice`).
+- The **private key** stays secret on the server.
+
+**2. Creating the Signature**
+
+When sending a message (e.g., POST to another server's inbox):
+- The server selects specific headers to sign: `(request-target)`, `host`, `date`, `digest` (body hash), etc.
+- It creates a **signature string** by concatenating these headers with their values.
+- It signs this string with the **private key**.
+- The signature is added as a `Signature` header.
+
+**3. Example Signed Request**
+
+```http
+POST /inbox HTTP/1.1
+Host: remote-server.example
+Date: Mon, 21 Dec 2025 12:00:00 GMT
+Digest: SHA-256=X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=
+Content-Type: application/activity+json
+
+Signature: keyId="https://my-server.example/users/alice#main-key",
+           algorithm="rsa-sha256",
+           headers="(request-target) host date digest",
+           signature="base64_encoded_signature_here..."
+
+{
+  "@context": "https://www.w3.org/ns/activitystreams",
+  "type": "Like",
+  "actor": "https://my-server.example/users/alice",
+  "object": "https://remote-server.example/posts/123"
+}
+```
+
+**4. Verification on Receiving Server**
+- Fetch the sender's public key from their actor profile (`keyId` URL).
+- Reconstruct the signed string using the same headers.
+- Verify the signature with the public key.
+- If valid → accept message.
+- If invalid → reject (possible attack).
+
+#### Standards Used
+
+- **HTTP Message Signatures** (RFC 9421) — the modern standard.
+- **Linked Data Signatures** — older but still used in some implementations.
+- Most Fediverse software (Mastodon, GoToSocial, Akkoma) uses a compatible subset.
+
+#### Security Benefits
+
+- Prevents spoofing
+- Ensures message integrity
+- Works over plain HTTP (though HTTPS is strongly recommended)
+- No need for shared secrets between servers
+
+#### Limitations
+
+- Doesn't encrypt content (use DIDComm or E2E for privacy).
+- Relies on correct key management.
+- Some implementations have quirks (e.g., header ordering).
+
+#### In Practice (Mastodon Example)
+
+When you like a post on a remote server:
+- Your server signs the `Like` activity with your private key.
+- Remote server verifies using your public key from your profile.
+- Only then adds the like to the post.
+
+#### Summary
+
+**HTTP Signatures are the trust backbone of the Fediverse.** They allow decentralized servers to verify that federated messages genuinely come from who they claim — without needing a central certificate authority.
+
+In PAGI-Core's `pagi-activitypub-plugin`, we use HTTP Signatures (with DID-based keys) to:
+- Authenticate our outbound posts
+- Verify incoming federation activities
+- Enable safe public interaction with the broader social web
+
+This makes your swarm not just intelligent — but **verifiably authentic** in the open Fediverse.
+
+Want to see a real signed request example from PAGI-Core logs? Just ask! 🔥
+
+---
+
 ## Decentralized Identity (DID) System
 
 PAGI-Core includes a comprehensive Decentralized Identity (DID) system that provides cryptographic identity, signing, verification, and secure communication capabilities for twins. The system uses the W3C DID standard with `did:key:` method and Ed25519 cryptographic keys.
@@ -1647,10 +1753,12 @@ curl -X POST http://localhost:8010/execute/did_verify_artifact \
 
 **Tools**:
 - `didcomm_send_message` - Send a signed message to another twin
+- `didcomm_send_message_with_relay` - Send a signed message; if direct delivery fails, store-and-forward via a relay node (offline support)
 - `didcomm_get_inbox` - Retrieve messages from inbox
 
 **Endpoints**:
 - `POST /send` - Send a message (via tool execution)
+- `POST /send_with_relay` - Send a message with offline relay fallback (via tool execution)
 - `POST /inbox` - Get inbox messages (via tool execution)
 - `POST /receive` - Receive messages from peers (public endpoint)
 
@@ -1685,6 +1793,35 @@ curl -X POST http://localhost:8010/execute/didcomm_send_message \
       }
     }
   }'
+```
+
+**Example - Sending with an Offline Relay (Store-and-Forward)**:
+
+Run an always-online relay node by deploying the same `pagi-didcomm-plugin` on a stable host.
+
+```bash
+# Try direct delivery first; if it fails, store the message on the relay node.
+curl -X POST http://localhost:8010/execute/didcomm_send_message_with_relay \
+  -H "Content-Type: application/json" \
+  -d '{
+    "twin_id": "abc-123",
+    "parameters": {
+      "from_twin_id": "abc-123",
+      "to_did": "did:key:...recipient...",
+      "to_url": "http://twin-b:9030",
+      "relay_url": "http://relay-node:9030",
+      "msg_type": "text/plain",
+      "body": {"text": "deliver when you\u0027re back online"}
+    }
+  }'
+```
+
+When Twin B is back online, it can poll the relay mailbox directly:
+
+```bash
+curl -X POST http://relay-node:9030/inbox \
+  -H "Content-Type: application/json" \
+  -d '{"did": "did:key:...recipient..."}'
 ```
 
 **Example - Retrieving Inbox**:
