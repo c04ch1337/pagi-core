@@ -4,6 +4,20 @@ Comprehensive smoke test suite for PAGI-Core services and plugins, designed for 
 
 ## Scripts Overview
 
+### Core Smoke Tests
+
+1. **`smoke-test.sh`** - Main smoke test for all services and plugins
+2. **`smoke-test-json.sh`** - JSON output version for automation
+3. **`smoke-test-remediate.sh`** - Auto-remediation for common issues
+
+### Phase 6 Smoke Tests (Swarm Deployment)
+
+4. **`phase6-smoke-test.sh`** - Phase 6 specific tests for real-world swarm deployment
+5. **`phase6-smoke-test-json.sh`** - JSON output version for Phase 6
+6. **`phase6-remediate.sh`** - Auto-remediation for Phase 6 issues
+
+## Scripts Overview
+
 ### 1. `smoke-test.sh` - Main Smoke Test Script
 
 Comprehensive test suite that validates all core services and plugin integrations.
@@ -235,6 +249,137 @@ These scripts can be integrated into CI/CD pipelines:
   run: |
     ./scripts/smoke-test-json.sh
     cat smoke-test-results.json
+```
+
+## Phase 6 Smoke Test (Swarm Deployment)
+
+The Phase 6 smoke test validates real-world swarm deployment scenarios specific to Phase 6 requirements.
+
+### Phase 6 Test Coverage
+
+**Phase 1: Infrastructure and Core Services**
+- Redis and Kafka connectivity
+- Core service health checks
+
+**Phase 2: Twin Creation and DID Setup**
+- Create multiple twins (Twin A, Twin B)
+- Retrieve DIDs for each twin
+- Verify DID document structure
+
+**Phase 3: DIDComm Messaging Between Twins**
+- DIDComm plugin health
+- Tool registration verification
+- Send encrypted messages between twins
+- Verify message delivery
+
+**Phase 4: Playbook Synchronization**
+- Hive Sync plugin functionality
+- Swarm Sync plugin functionality
+- Playbook pull operations
+- Tool registration verification
+
+**Phase 5: Refinement Artifact Generation**
+- Executive Engine plan generation
+- Refinement artifact creation
+- Artifact push to repository (if configured)
+
+**Phase 6: MO Meta-Learning Capabilities**
+- MO interaction with twins
+- Tool access verification
+- Meta-learning workflow validation
+
+**Phase 7: Relay Node Functionality**
+- Relay message tool registration
+- Offline message delivery via relay
+- Relay polling functionality
+
+**Phase 8: Multi-Twin Coordination**
+- Independent twin goal execution
+- Shared resource access
+- Concurrent twin operations
+
+### Usage
+
+```bash
+# Run Phase 6 smoke test
+./scripts/phase6-smoke-test.sh
+
+# With custom configuration
+BASE_URL=http://localhost:8080 ./scripts/phase6-smoke-test.sh
+
+# JSON output for automation
+./scripts/phase6-smoke-test-json.sh
+
+# Auto-remediate Phase 6 issues
+./scripts/phase6-remediate.sh all
+
+# Remediate specific components
+./scripts/phase6-remediate.sh infrastructure
+./scripts/phase6-remediate.sh core
+./scripts/phase6-remediate.sh plugins
+./scripts/phase6-remediate.sh env  # Check environment variables
+```
+
+### Phase 6 Environment Variables
+
+Optional but recommended for full Phase 6 functionality:
+
+- `HIVE_REPO_URL` - GitHub repository URL for Hive sync
+- `SWARM_REPO_URL` - GitHub repository URL for Swarm sync
+- `RELAY_URL` - Relay node URL for offline messaging
+
+```bash
+export HIVE_REPO_URL=https://github.com/your-org/pagi-hive
+export SWARM_REPO_URL=https://github.com/your-org/pagi-swarm
+export RELAY_URL=http://relay-node:9030
+```
+
+### Phase 6 Remediation
+
+The Phase 6 remediation script automatically:
+- Starts infrastructure (Redis, Kafka, Zookeeper)
+- Starts all core services
+- Starts Phase 6 specific plugins (DID, DIDComm, VC, Hive Sync, Swarm Sync, ActivityPub)
+- Verifies service health
+- Checks environment variable configuration
+- Restarts failed services
+
+### Cursor IDE Agent Integration
+
+**Automated Workflow:**
+```bash
+# 1. Run Phase 6 smoke test
+./scripts/phase6-smoke-test.sh
+
+# 2. If failures, auto-remediate
+./scripts/phase6-remediate.sh all
+
+# 3. Re-run to verify
+./scripts/phase6-smoke-test.sh
+
+# 4. Parse JSON results
+./scripts/phase6-smoke-test-json.sh | jq '.summary'
+```
+
+**JSON Output Structure:**
+```json
+{
+  "phase": "Phase 6 - Real-World Swarm Deployment",
+  "timestamp": "2025-12-21T12:00:00Z",
+  "phases": {
+    "infrastructure": [...],
+    "twin_setup": [...],
+    "didcomm_messaging": [...],
+    "playbook_sync": [...],
+    ...
+  },
+  "summary": {
+    "total": 25,
+    "passed": 23,
+    "failed": 2,
+    "skipped": 0
+  }
+}
 ```
 
 ## Contributing
