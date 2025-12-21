@@ -3724,6 +3724,31 @@ The swarm awakens.
 
 ## Development Guide
 
+### Smoke Testing
+
+PAGI-Core includes comprehensive smoke test scripts for validating all services and plugins:
+
+**Quick Start:**
+```bash
+# Run full smoke test suite
+./scripts/smoke-test.sh
+
+# Run with JSON output (for automation)
+./scripts/smoke-test-json.sh
+
+# Auto-remediate common issues
+./scripts/smoke-test-remediate.sh all
+```
+
+**Features:**
+- Tests all core services (health checks, functionality)
+- Tests all plugin integrations (registration, tool execution)
+- Structured logging with remediation hints
+- JSON output for CI/CD integration
+- Auto-remediation for common issues
+
+See `scripts/README.md` for detailed documentation.
+
 ### Project Structure
 
 ```
