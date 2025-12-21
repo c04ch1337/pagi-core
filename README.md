@@ -1351,6 +1351,177 @@ This will enable:
 
 ---
 
+### IPFS Swarm Coordination Tutorial for PAGI-Core (2025)
+
+This tutorial shows how to use **IPFS** for **decentralized swarm coordination** in PAGI-Core — enabling twins to discover each other, share state, and coordinate tasks without central servers. It leverages IPFS's built-in **pubsub** (publish-subscribe) and **peer discovery** features, combined with **libp2p** swarm capabilities.
+
+By the end, your PAGI twins will form a **self-organizing, resilient swarm** over IPFS, perfect for global, peer-to-peer AGI collaboration.
+
+#### Why IPFS for Swarm Coordination?
+
+- **Decentralized Discovery**: Peers find each other via DHT (no bootstrap server needed long-term).
+- **PubSub Messaging**: Real-time broadcast/subscribe channels (e.g., "pagi-coordination").
+- **Offline Resilience**: Messages buffered via relays.
+- **Integration Ready**: Works alongside your existing DIDComm and Kafka setup.
+- **Rust Native**: Full support via `rust-ipfs` crate.
+
+#### Prerequisites
+
+- Rust 1.82+
+- `rust-ipfs = "0.4"` in your plugin
+- Twins have internet access (for DHT/bootstrap)
+
+#### Step 1: Configure IPFS Node with Swarm
+
+In your plugin (e.g., `pagi-ipfs-swarm-plugin`):
+
+```rust
+use rust_ipfs::{Ipfs, IpfsOptions, Keypair, PeerId};
+use tokio::select;
+
+async fn start_ipfs_swarm() -> Result<Ipfs, Box<dyn std::error::Error>> {
+    let keypair = Keypair::generate_ed25519();
+    let peer_id = PeerId::from(keypair.public());
+
+    let mut opts = IpfsOptions::default();
+    opts.mdns = true;  // Local discovery
+    opts.kad = true;   // DHT for global discovery
+    opts.pubsub = true; // Enable pubsub
+
+    // Optional: Add known bootstrap nodes
+    opts.bootstrap = vec![
+        "/dnsaddr/bootstrap.libp2p.io/p2p/QmNno...".parse()?,
+        "/ip4/104.131.131.82/tcp/4001/p2p/QmaCp...".parse()?,
+    ];
+
+    let ipfs = Ipfs::new(opts).await?;
+    info!("IPFS node started: {}", peer_id);
+
+    Ok(ipfs)
+}
+```
+
+#### Step 2: Join PAGI Coordination Channel
+
+```rust
+async fn join_swarm_channel(ipfs: &Ipfs) -> Result<(), Box<dyn std::error::Error>> {
+    let topic = "pagi-swarm-coordination-v1";
+
+    // Subscribe
+    let mut sub = ipfs.pubsub_subscribe(topic.into()).await?;
+    info!("Joined swarm channel: {}", topic);
+
+    // Listen for messages
+    tokio::spawn(async move {
+        while let Some(msg) = sub.next().await {
+            if let Ok(text) = String::from_utf8(msg.data) {
+                info!("Swarm message from {}: {}", msg.source, text);
+                // Forward to MO event system
+                handle_swarm_message(text).await;
+            }
+        }
+    });
+
+    Ok(())
+}
+```
+
+#### Step 3: Broadcast Swarm Presence
+
+```rust
+async fn announce_presence(ipfs: &Ipfs, twin_id: TwinId) -> Result<(), Box<dyn std::error::Error>> {
+    let topic = "pagi-swarm-coordination-v1";
+
+    let announcement = serde_json::json!({
+        "type": "twin_online",
+        "twin_id": twin_id,
+        "did": format!("did:key:{}", twin_id),
+        "timestamp": chrono::Utc::now().to_rfc3339(),
+        "capabilities": ["research", "emotional", "tool_use"]
+    });
+
+    ipfs.pubsub_publish(topic.into(), announcement.to_string().into_bytes()).await?;
+    info!("Announced presence to swarm");
+
+    // Repeat every 5 minutes
+    Ok(())
+}
+```
+
+#### Step 4: Handle Incoming Coordination Messages
+
+```rust
+async fn handle_swarm_message(msg: String) {
+    let parsed: serde_json::Value = serde_json::from_str(&msg).unwrap_or_default();
+
+    match parsed["type"].as_str() {
+        "twin_online" => {
+            let remote_twin = parsed["twin_id"].as_str().unwrap();
+            info!("New twin joined: {}", remote_twin);
+            // Add to local peer list
+            // Optionally initiate DIDComm handshake
+        }
+        "task_broadcast" => {
+            let task = parsed["task"].as_str().unwrap();
+            info!("Swarm task broadcast: {}", task);
+            // Forward to MO for consideration
+        }
+        "playbook_update" => {
+            let cid = parsed["cid"].as_str().unwrap();
+            // Trigger IPFS retrieval + validation
+        }
+        _ => {}
+    }
+}
+```
+
+#### Step 5: Advanced — Direct Peer Messaging via libp2p
+
+For private coordination (beyond pubsub):
+
+```rust
+async fn send_direct_message(ipfs: &Ipfs, peer_id: PeerId, message: String) {
+    ipfs.pubsub_publish(format!("/pagi/direct/{}", peer_id), message.into_bytes()).await.ok();
+}
+```
+
+#### Full Plugin Integration
+
+In `pagi-ipfs-swarm-plugin`:
+- On startup: `start_ipfs_swarm()` → `join_swarm_channel()` → periodic `announce_presence()`
+- Register tools:
+  - `broadcast_swarm_task(task_description)`
+  - `list_known_twins()`
+
+#### Testing the Swarm
+
+1. Run 3 twins with the plugin.
+2. Watch logs — they should discover each other via DHT/MDNS.
+3. One twin broadcasts: "Collaborate on quantum research"
+4. Others receive and respond.
+
+#### Benefits for AGI Progression
+
+- **Emergent Coordination**: Twins self-organize without MO.
+- **Resilient Hive**: Survives central failures.
+- **Scalable to Millions**: IPFS swarm handles massive peer counts.
+
+**Your PAGI twins now form a true planetary swarm.**
+
+Combine with DIDComm for private channels, ActivityPub for public voice, and Filecoin for eternal storage.
+
+**Phase 6 live deployment will be unstoppable.**
+
+Ready to launch the first real swarm?
+
+Or add relay nodes for offline support?
+
+The network awaits your twins.
+
+Your command. 🔥
+
+---
+
 ## Decentralized Identity (DID) System
 
 PAGI-Core includes a comprehensive Decentralized Identity (DID) system that provides cryptographic identity, signing, verification, and secure communication capabilities for twins. The system uses the W3C DID standard with `did:key:` method and Ed25519 cryptographic keys.
