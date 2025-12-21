@@ -6,7 +6,8 @@ use axum::{
     Json, Router,
 };
 use git2::{build::CheckoutBuilder, Cred, FetchOptions, PushOptions, RemoteCallbacks, Repository, Signature};
-use pagi_common::{Playbook, RefinementArtifact, TwinId};
+use pagi_common::{PagiError, Playbook, RefinementArtifact, TwinId};
+use pagi_http::errors::PagiAxumError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -159,8 +160,8 @@ async fn push_artifact(State(state): State<AppState>, Json(artifact): Json<Refin
         .map_err(|e| e.to_string())
     {
         Ok(Ok(branch)) => (StatusCode::OK, format!("pushed artifact on branch {branch}")).into_response(),
-        Ok(Err(err)) => (StatusCode::BAD_GATEWAY, err).into_response(),
-        Err(join_err) => (StatusCode::INTERNAL_SERVER_ERROR, join_err).into_response(),
+        Ok(Err(err)) => PagiAxumError::with_status(PagiError::plugin_exec(err), StatusCode::BAD_GATEWAY).into_response(),
+        Err(join_err) => PagiAxumError::with_status(PagiError::plugin_exec(join_err), StatusCode::INTERNAL_SERVER_ERROR).into_response(),
     }
 }
 
@@ -181,8 +182,8 @@ async fn pull_latest_playbook(
         .map_err(|e| e.to_string())
     {
         Ok(Ok(playbook)) => (StatusCode::OK, Json(playbook)).into_response(),
-        Ok(Err(err)) => (StatusCode::BAD_GATEWAY, err).into_response(),
-        Err(join_err) => (StatusCode::INTERNAL_SERVER_ERROR, join_err).into_response(),
+        Ok(Err(err)) => PagiAxumError::with_status(PagiError::plugin_exec(err), StatusCode::BAD_GATEWAY).into_response(),
+        Err(join_err) => PagiAxumError::with_status(PagiError::plugin_exec(join_err), StatusCode::INTERNAL_SERVER_ERROR).into_response(),
     }
 }
 

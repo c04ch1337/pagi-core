@@ -1,4 +1,3 @@
-use axum::response::IntoResponse;
 use axum::{
     routing::{get, post},
     extract::{Path, State, Json},
@@ -6,6 +5,7 @@ use axum::{
     Router,
 };
 use pagi_common::{publish_event, EventEnvelope, EventType};
+use pagi_http::errors::PagiAxumError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::net::SocketAddr;
@@ -59,24 +59,16 @@ async fn healthz() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok")
 }
 
-async fn build_context(State(state): State<AppState>, Json(req): Json<BuildRequest>) -> impl IntoResponse {
+async fn build_context(
+    State(state): State<AppState>,
+    Json(req): Json<BuildRequest>,
+) -> Result<(StatusCode, Json<BuildResponse>), PagiAxumError> {
     let mem_endpoint = format!(
         "{}/memory/{}",
         state.working_memory_url.trim_end_matches('/'),
         req.twin_id
     );
-    let mem: Vec<serde_json::Value> = match state
-        .http
-        .get(mem_endpoint)
-        .send()
-        .await
-    {
-        Ok(response) => match response.json().await {
-            Ok(json) => json,
-            Err(e) => return (StatusCode::BAD_GATEWAY, format!("Failed to parse response: {e}")),
-        },
-        Err(e) => return (StatusCode::BAD_GATEWAY, format!("Failed to fetch memory: {e}")),
-    };
+    let mem: Vec<serde_json::Value> = state.http.get(mem_endpoint).send().await?.json().await?;
 
     let mut context = String::new();
     context.push_str("# Working Memory\n");
@@ -102,5 +94,5 @@ async fn build_context(State(state): State<AppState>, Json(req): Json<BuildReque
     ev.source = Some("pagi-context-engine".to_string());
     let _ = publish_event(ev).await;
 
-    (StatusCode::OK, Json(resp))
+    Ok((StatusCode::OK, Json(resp)))
 }

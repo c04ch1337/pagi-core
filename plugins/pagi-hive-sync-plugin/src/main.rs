@@ -6,7 +6,8 @@ use axum::{
     Json, Router,
 };
 use git2::{build::CheckoutBuilder, Cred, FetchOptions, PushOptions, RemoteCallbacks, Repository, Signature};
-use pagi_common::{Playbook, RefinementArtifact, TwinId};
+use pagi_common::{PagiError, Playbook, RefinementArtifact, TwinId};
+use pagi_http::errors::PagiAxumError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{net::SocketAddr, path::PathBuf};
@@ -146,7 +147,11 @@ async fn register_tools_with_gateway(state: &AppState) -> Result<(), String> {
 
 async fn hive_push(State(state): State<AppState>, Json(artifact): Json<RefinementArtifact>) -> impl IntoResponse {
     if artifact.critique.trim().is_empty() {
-        return (StatusCode::BAD_REQUEST, "critique must not be empty").into_response();
+        return PagiAxumError::with_status(
+            PagiError::config("critique must not be empty"),
+            StatusCode::BAD_REQUEST,
+        )
+        .into_response();
     }
 
     let cfg = state.git.clone();
@@ -155,8 +160,8 @@ async fn hive_push(State(state): State<AppState>, Json(artifact): Json<Refinemen
         .map_err(|e| e.to_string())
     {
         Ok(Ok(branch)) => (StatusCode::OK, format!("pushed artifact on branch {branch}")).into_response(),
-        Ok(Err(err)) => (StatusCode::BAD_GATEWAY, err).into_response(),
-        Err(join_err) => (StatusCode::INTERNAL_SERVER_ERROR, join_err).into_response(),
+        Ok(Err(err)) => PagiAxumError::with_status(PagiError::plugin_exec(err), StatusCode::BAD_GATEWAY).into_response(),
+        Err(join_err) => PagiAxumError::with_status(PagiError::plugin_exec(join_err), StatusCode::INTERNAL_SERVER_ERROR).into_response(),
     }
 }
 
@@ -173,8 +178,8 @@ async fn hive_pull(State(state): State<AppState>, Json(_req): Json<HivePullReque
         .map_err(|e| e.to_string())
     {
         Ok(Ok(playbook)) => (StatusCode::OK, Json(playbook)).into_response(),
-        Ok(Err(err)) => (StatusCode::BAD_GATEWAY, err).into_response(),
-        Err(join_err) => (StatusCode::INTERNAL_SERVER_ERROR, join_err).into_response(),
+        Ok(Err(err)) => PagiAxumError::with_status(PagiError::plugin_exec(err), StatusCode::BAD_GATEWAY).into_response(),
+        Err(join_err) => PagiAxumError::with_status(PagiError::plugin_exec(join_err), StatusCode::INTERNAL_SERVER_ERROR).into_response(),
     }
 }
 
@@ -295,4 +300,3 @@ fn git_pull_latest_playbook(cfg: &GitConfig) -> Result<Playbook, String> {
     let playbook_str = std::fs::read_to_string(&playbook_path).map_err(|e| e.to_string())?;
     toml::from_str::<Playbook>(&playbook_str).map_err(|e| e.to_string())
 }
-

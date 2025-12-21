@@ -7,7 +7,8 @@ use axum::{
 };
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use multibase::Base;
-use pagi_common::TwinId;
+use pagi_common::{PagiError, TwinId};
+use pagi_http::errors::PagiAxumError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -149,7 +150,7 @@ struct SignResponse {
 async fn sign_artifact(State(state): State<AppState>, Json(req): Json<SignRequest>) -> impl IntoResponse {
     match sign_with_twin_key(&state.identity_keys_dir, req.twin_id, &req.artifact) {
         Ok((did, signature)) => (StatusCode::OK, Json(SignResponse { did, signature, artifact: req.artifact })).into_response(),
-        Err(err) => (StatusCode::BAD_REQUEST, err).into_response(),
+        Err(err) => PagiAxumError::with_status(PagiError::config(err), StatusCode::BAD_REQUEST).into_response(),
     }
 }
 
@@ -168,7 +169,7 @@ struct VerifyResponse {
 async fn verify_artifact(Json(req): Json<VerifyRequest>) -> impl IntoResponse {
     match verify_with_did_key(&req.did, &req.signature, &req.artifact) {
         Ok(valid) => (StatusCode::OK, Json(VerifyResponse { valid })).into_response(),
-        Err(err) => (StatusCode::BAD_REQUEST, err).into_response(),
+        Err(err) => PagiAxumError::with_status(PagiError::config(err), StatusCode::BAD_REQUEST).into_response(),
     }
 }
 

@@ -1,11 +1,11 @@
 use axum::{
     extract::State,
     http::StatusCode,
-    response::IntoResponse,
     routing::{get, post},
     Json, Router,
 };
-use pagi_common::EventEnvelope;
+use pagi_common::{PagiError, EventEnvelope};
+use pagi_http::errors::PagiAxumError;
 use rdkafka::{
     admin::{AdminClient, AdminOptions, NewTopic, TopicReplication},
     producer::{FutureProducer, FutureRecord},
@@ -54,22 +54,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn health() -> impl IntoResponse {
+async fn health() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok")
 }
 
-async fn publish(State(state): State<Arc<AppState>>, Json(mut ev): Json<EventEnvelope>) -> impl IntoResponse {
+async fn publish(
+    State(state): State<Arc<AppState>>,
+    Json(mut ev): Json<EventEnvelope>,
+) -> Result<StatusCode, PagiAxumError> {
     if ev.event_type.trim().is_empty() {
-        return (StatusCode::BAD_REQUEST, "event_type required").into_response();
+        return Err(PagiAxumError::with_status(
+            PagiError::config("event_type required"),
+            StatusCode::BAD_REQUEST,
+        ));
     }
     if ev.source.is_none() {
         ev.source = Some("pagi-event-router".to_string());
     }
 
-    let payload = match serde_json::to_string(&ev) {
-        Ok(s) => s,
-        Err(e) => return (StatusCode::BAD_REQUEST, e.to_string()).into_response(),
-    };
+    let payload = serde_json::to_string(&ev).map_err(|e| {
+        PagiAxumError::with_status(PagiError::Unknown(e.to_string()), StatusCode::BAD_REQUEST)
+    })?;
 
     let key = ev
         .twin_id
@@ -78,8 +83,11 @@ async fn publish(State(state): State<Arc<AppState>>, Json(mut ev): Json<EventEnv
 
     let record = FutureRecord::to(TOPIC).payload(&payload).key(&key);
     match state.producer.send(record, Duration::from_secs(5)).await {
-        Ok(_) => StatusCode::ACCEPTED.into_response(),
-        Err((e, _)) => (StatusCode::BAD_GATEWAY, e.to_string()).into_response(),
+        Ok(_) => Ok(StatusCode::ACCEPTED),
+        Err((e, _)) => Err(PagiAxumError::with_status(
+            PagiError::plugin_exec(format!("kafka produce failed: {e}")),
+            StatusCode::BAD_GATEWAY,
+        )),
     }
 }
 

@@ -18,6 +18,7 @@ pub enum ErrorCode {
     PluginLoadFailed = 4001,
     PluginExecutionFailed = 4002,
     NetworkTimeout = 7001,
+    NetworkError = 7002,
     Unknown = 9999,
 }
 
@@ -95,8 +96,13 @@ impl From<std::io::Error> for PagiError {
 
 impl From<reqwest::Error> for PagiError {
     fn from(value: reqwest::Error) -> Self {
+        let code = if value.is_timeout() {
+            ErrorCode::NetworkTimeout
+        } else {
+            ErrorCode::NetworkError
+        };
         Self::Network {
-            code: ErrorCode::Unknown,
+            code,
             source: value,
         }
     }

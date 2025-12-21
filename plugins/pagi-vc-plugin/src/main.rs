@@ -7,6 +7,8 @@ use axum::{
 };
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use multibase::Base;
+use pagi_common::PagiError;
+use pagi_http::errors::PagiAxumError;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -141,7 +143,7 @@ struct IssueReputationRequest {
 async fn issue_reputation_vc(State(state): State<AppState>, Json(req): Json<IssueReputationRequest>) -> impl IntoResponse {
     match issue_reputation_credential(&state.identity_keys_dir, &req) {
         Ok(vc) => (StatusCode::OK, Json(vc)).into_response(),
-        Err(err) => (StatusCode::BAD_REQUEST, err).into_response(),
+        Err(err) => PagiAxumError::with_status(PagiError::config(err), StatusCode::BAD_REQUEST).into_response(),
     }
 }
 
@@ -153,7 +155,7 @@ struct VerifyVcRequest {
 async fn verify_vc(Json(req): Json<VerifyVcRequest>) -> impl IntoResponse {
     match verify_credential(&req.credential) {
         Ok(valid) => (StatusCode::OK, Json(json!({"valid": valid}))).into_response(),
-        Err(err) => (StatusCode::BAD_REQUEST, err).into_response(),
+        Err(err) => PagiAxumError::with_status(PagiError::config(err), StatusCode::BAD_REQUEST).into_response(),
     }
 }
 

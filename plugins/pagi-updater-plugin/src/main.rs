@@ -6,6 +6,8 @@ use axum::{
     Json, Router,
 };
 use pagi_common::TwinId;
+use pagi_common::PagiError;
+use pagi_http::errors::PagiAxumError;
 use semver::Version;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -244,7 +246,7 @@ async fn check_update_handler(
 ) -> impl IntoResponse {
     match check_update(&state, req).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
-        Err(err) => (StatusCode::BAD_GATEWAY, err.to_string()).into_response(),
+        Err(err) => PagiAxumError::with_status(PagiError::plugin_exec(err.to_string()), StatusCode::BAD_GATEWAY).into_response(),
     }
 }
 
@@ -275,7 +277,7 @@ async fn apply_update_handler(
 ) -> impl IntoResponse {
     match apply_update(&state, req).await {
         Ok(resp) => (StatusCode::OK, Json(resp)).into_response(),
-        Err(err) => (StatusCode::BAD_GATEWAY, err.to_string()).into_response(),
+        Err(err) => PagiAxumError::with_status(PagiError::plugin_exec(err.to_string()), StatusCode::BAD_GATEWAY).into_response(),
     }
 }
 

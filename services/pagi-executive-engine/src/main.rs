@@ -8,6 +8,7 @@ use pagi_common::{
     publish_event, CoreEvent, EventEnvelope, EventType, InstructionsField, Playbook, PlaybookInstructions,
     RefinementArtifact, TwinId,
 };
+use pagi_http::errors::PagiAxumError;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::net::SocketAddr;
@@ -301,7 +302,7 @@ async fn interact(
     State(state): State<AppState>,
     Path(twin_id): Path<Uuid>,
     Json(req): Json<InteractRequest>,
-) -> Result<Json<InteractResponse>, (StatusCode, String)> {
+) -> Result<Json<InteractResponse>, PagiAxumError> {
     // 1) Publish GoalReceived
     let mut goal_ev = EventEnvelope::new_core(twin_id, CoreEvent::GoalReceived { goal: req.goal.clone() });
     goal_ev.source = Some("pagi-executive-engine".to_string());
@@ -325,13 +326,11 @@ async fn interact(
         .post(context_url)
         .json(&json!({"twin_id": twin_id, "goal": req.goal, "playbook": playbook}))
         .send()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?
+        .await?
         .error_for_status()
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?
+        ?
         .json()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+        .await?;
 
     // 3) Inference
     let playbook_context = if playbook.context_engineering.is_none() && !playbook.system_prompt().trim().is_empty() {
@@ -347,13 +346,11 @@ async fn interact(
         .post(infer_url)
         .json(&json!({"twin_id": twin_id, "input": "generate plan", "context": full_context}))
         .send()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?
+        .await?
         .error_for_status()
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?
+        ?
         .json()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+        .await?;
 
     // 5) Emotion state (optional)
     let emotion_url = format!("{}/emotion/{}", state.emotion_state_url.trim_end_matches('/'), twin_id);
@@ -361,13 +358,11 @@ async fn interact(
         .http
         .get(emotion_url)
         .send()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?
+        .await?
         .error_for_status()
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?
+        ?
         .json()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+        .await?;
 
     // 6) Discover available tools from ExternalGateway
     let tools_url = format!("{}/tools", state.external_gateway_url.trim_end_matches('/'));
@@ -375,13 +370,11 @@ async fn interact(
         .http
         .get(tools_url)
         .send()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?
+        .await?
         .error_for_status()
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?
+        ?
         .json()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+        .await?;
 
     // 7) Generate plan incorporating available tools
     let tool_names: Vec<String> = tools_response.tools.iter().map(|t| t.name.clone()).collect();
@@ -437,8 +430,7 @@ async fn interact(
         .post(act_url)
         .json(&json!({"tool": "execute_plan", "args": {"twin_id": twin_id, "plan": plan}}))
         .send()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+        .await?;
 
     // 11) Self-improvement loop (best-effort): reflect and offer artifact to Hive sync plugin via ExternalGateway.
     let artifact = generate_refinement_artifact(twin_id, &req.goal, &plan, &playbook);

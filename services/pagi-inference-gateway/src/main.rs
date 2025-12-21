@@ -5,6 +5,7 @@ use axum::{
     Json, Router,
 };
 use pagi_common::{publish_event, EventEnvelope, EventType};
+use pagi_http::errors::PagiAxumError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::net::SocketAddr;
@@ -54,7 +55,10 @@ async fn healthz() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok")
 }
 
-async fn infer(State(_state): State<AppState>, Json(req): Json<InferRequest>) -> Result<Json<InferResponse>, (StatusCode, String)> {
+async fn infer(
+    State(_state): State<AppState>,
+    Json(req): Json<InferRequest>,
+) -> Result<Json<InferResponse>, PagiAxumError> {
     let mut ev = EventEnvelope::new(
         EventType::InferenceRequested,
         json!({"twin_id": req.twin_id, "has_context": req.context.is_some()}),

@@ -1,5 +1,5 @@
 [package]
-name = "pagi-http"
+name = "pagi-ocm-orchestration-plugin"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
@@ -9,11 +9,13 @@ axum.workspace = true
 reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true
 tokio.workspace = true
 tower-http.workspace = true
 tracing.workspace = true
-tracing-subscriber.workspace = true
 time.workspace = true
 
-pagi-common = { path = "../pagi-common" }
+kube = { version = "0.92", features = ["runtime", "derive"] }
+k8s-openapi = { version = "0.22", features = ["v1_28"] }
+
+pagi-common = { path = "../../common/pagi-common" }
+pagi-http = { path = "../../common/pagi-http" }

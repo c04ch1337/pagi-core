@@ -5,6 +5,7 @@ use axum::{
     Json, Router,
 };
 use pagi_common::{publish_event, EventEnvelope, EventType, Playbook};
+use pagi_http::errors::PagiAxumError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::net::SocketAddr;
@@ -168,7 +169,10 @@ async fn healthz() -> (StatusCode, &'static str) {
     (StatusCode::OK, "ok")
 }
 
-async fn build_context(State(state): State<AppState>, Json(req): Json<BuildRequest>) -> Result<Json<BuildResponse>, (StatusCode, String)> {
+async fn build_context(
+    State(state): State<AppState>,
+    Json(req): Json<BuildRequest>,
+) -> Result<Json<BuildResponse>, PagiAxumError> {
     let mem_endpoint = format!(
         "{}/memory/{}",
         state.working_memory_url.trim_end_matches('/'),
@@ -178,11 +182,9 @@ async fn build_context(State(state): State<AppState>, Json(req): Json<BuildReque
         .http
         .get(mem_endpoint)
         .send()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?
+        .await?
         .json()
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+        .await?;
 
     // Base memory layer.
     let mut memory_layer = String::new();

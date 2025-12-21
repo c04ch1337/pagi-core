@@ -13,6 +13,7 @@ use axum::{
 };
 use metrics_exporter_prometheus::{PrometheusBuilder, PrometheusHandle};
 use pagi_common::{ErrorCode, PagiError, TwinId};
+use pagi_http::errors::PagiAxumError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
@@ -28,12 +29,6 @@ use tracing::info;
 use uuid::Uuid;
 
 use redis_registry::{load_all_tools, persist_tool};
-
-#[derive(Debug, Serialize)]
-struct ErrorBody {
-    error: String,
-    code: u32,
-}
 
 static METRICS: OnceLock<PrometheusHandle> = OnceLock::new();
 
@@ -52,8 +47,7 @@ async fn metrics_handler() -> impl IntoResponse {
 }
 
 fn err_json(status: StatusCode, err: PagiError) -> impl IntoResponse {
-    let code = err.code() as u32;
-    (status, Json(ErrorBody { error: err.to_string(), code }))
+    PagiAxumError::with_status(err, status)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
